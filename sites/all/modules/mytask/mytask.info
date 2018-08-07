@@ -1,0 +1,6 @@
+name = My Task
+description = The module show received tasks of current user
+package = "User"
+core = 7.x
+version = "7.x-1.0"
+

@@ -1,0 +1,366 @@
+<?php
+
+define('MYPOST_SLUG', 'my-post');
+define('POSTLIST_SLUG', 'posts');
+define('FIELD_CATEGORY', 'field_categories');
+define('MYBLOCK_DIR', drupal_get_path('module', 'myblock'));
+if( !defined('LIBRARIES_PATH') ) {
+    define('LIBRARIES_PATH', dirname(dirname(__DIR__)) . '/libraries');
+}
+require_once LIBRARIES_PATH . '/includes/common.php';
+function myblock_theme(){
+    $path = MYBLOCK_DIR . '/theme';
+    $themes = array(
+        'myblock_block_form' => array(
+            'render element' => 'form',
+            'template' => 'myblock-form',
+            'path' => $path,
+        ),
+        'myblock_post_list' => array(
+            'template' => 'myblock-post-list',
+            'path' => $path,
+        ),
+    );
+    return $themes;
+
+}
+
+function template_preprocess_myblock_block_form(&$variables){
+    $variables['myblock_form'] = [];
+    $hidden = array();
+    // Provide variables named after form keys so themers can print each element independently.
+    foreach (element_children($variables['form']) as $key) {
+        $type = isset($variables['form'][$key]['#type']) ? $variables['form'][$key]['#type'] : '';
+        if ($type == 'hidden' || $type == 'token') {
+            $hidden[] = drupal_render($variables['form'][$key]);
+        }
+        else {
+            $variables['myblock_form'][$key] = drupal_render($variables['form'][$key]);
+        }
+    }
+    // Hidden form elements have no value to themers. No need for separation.
+    $variables['myblock_form']['hidden'] = implode($hidden);
+    $variables['myblock_form'] = implode($variables['myblock_form']);
+}
+
+/**
+* @file
+* myblock.module
+*/
+function myblock_block_info() {
+  // This example comes from node.module.
+
+  $blocks['myblock'] = array(
+    'info' => t('My post'),
+  );
+  $blocks['postlist'] = array(
+    'info' => t('Posts'),
+    'cache' => DRUPAL_NO_CACHE,
+  );
+  return $blocks;
+}
+
+/**
+ * Implements hook_block_view().
+ */
+function myblock_block_view($delta = '') {
+    #$block['content'] = drupal_get_form('myblock_block_form');
+    #return $block;
+}
+
+/**
+* Implement hook_permission().
+*/
+function myblock_permission() {
+  return array(
+    'submit myblock' => array(
+      'title' => t('Submit form'),
+      'description' => t('Submit the myblock form'),
+    ),
+    'access myblock posts' => array(
+      'title' => t('Access myblock posts'),
+      'description' => t('Access the myblock posts'),
+    ),
+  );
+}
+
+/**
+*
+* Implement hook_menu().
+*/
+function myblock_menu() {
+    $items = array();
+    $items[MYPOST_SLUG] = array(
+        'title' => 'My post',
+        #'page callback' => 'drupal_get_form',
+        'page callback' => 'myblock_add',
+        'type' => MENU_NORMAL_ITEM,
+        'page arguments' => array('myblock_block_form'),
+        'access arguments' => array('submit myblock'),
+        'file' => 'includes/myblock.pages.inc',
+    );
+    $items[MYPOST_SLUG.'/%node/edit'] = array(
+        'title' => 'Edit',
+        'page callback' => 'myblock_page_edit',
+        'page arguments' => array(1),
+        'access callback' => 'node_access',
+        'access arguments' => array('update', 1),
+        'weight' => 0,
+        'type' => MENU_LOCAL_TASK,
+        'context' => MENU_CONTEXT_PAGE | MENU_CONTEXT_INLINE,
+        'file' => 'includes/myblock.pages.inc',
+    );
+    $items[MYPOST_SLUG.'/%node/delete'] = array(
+        'title' => 'Delete',
+        'page callback' => 'drupal_get_form',
+        'page arguments' => array('myblock_delete_confirm', 1),
+        'access callback' => 'node_access',
+        'access arguments' => array('delete', 1),
+        'weight' => 1,
+        'type' => MENU_LOCAL_TASK,
+        'context' => MENU_CONTEXT_INLINE,
+        'file' => 'includes/myblock.pages.inc',
+    );
+    $items[POSTLIST_SLUG] = array(
+    'title' => 'Posts',
+    'page callback' => 'myblock_posts',
+    'access arguments' => array(
+      'access myblock posts',
+    ),
+     'type' => MENU_NORMAL_ITEM,
+      'page arguments' => array('myblock_posts'),
+    );
+    return $items;
+}
+if( !function_exists('check_field_categories') ) {
+    function check_field_categories($cat = 'field_categories')
+    {
+        static $vocabulary;
+        if (!isset($vocabulary[$cat])) {
+            $prior_field = field_read_field($cat, array('include_inactive' => TRUE));
+            $vocabulary[$cat] = $prior_field;
+        }
+        return !empty($vocabulary[$cat]) ? true : false;
+    }
+}
+
+function list_options(){
+    $term_voca = taxonomy_vocabulary_machine_name_load('categories');
+    $tree = [];
+    $options = [];#[t('Choose Category')];
+    if( !empty( $term_voca ) ) {
+        $tree = taxonomy_get_tree($term_voca->vid);
+        foreach ($tree as $key => $item){
+            $options[$item->tid] = $item->name;
+        }
+    }
+
+    return $options;
+}
+
+function myblock_form(){
+    $form = [];
+    $check_field_categories = check_field_categories();
+    if( $check_field_categories ) {
+        $form['field_categories'] = array(
+            '#type' => 'select',
+            '#title' => t('Categories'),
+            '#default_value' => 0,
+            '#options' => list_options(),
+            '#required' => TRUE,
+            '#attributes' => [
+                'class' => ['selectpicker']
+            ],
+        );
+    }
+    if( db_field_exists('node', 'price') ){
+        $form['price'] = array(
+            '#type' => 'textfield',
+            '#title' => t('Price'),
+            '#default_value' => '',
+            '#attributes' => [
+                'placeholder' => t('Price'),
+                'id' => 'price',
+            ],
+            '#required' => TRUE,
+        );
+    }
+    $form['group-maps']['address_maps'] = [
+        '#type' => 'textfield',
+        '#title' => t('Search your address'),
+        '#attributes' => [
+            'id' => 'address_maps',
+            'placeholder' =>  t('Search your address')
+        ],
+        '#required' => TRUE,
+    ];
+    $form['group-maps']['latitude'] = [
+        '#type' => 'hidden',
+        '#title' => t('Latitude'),
+        '#attributes' => [
+            'id' => 'latitude',
+        ],
+    ];
+    $form['group-maps']['longitude'] = [
+        '#type' => 'hidden',
+        '#title' => t('Longitude'),
+        '#suffix' => "<div class='parent-node-map'><div id='node-map'></div></div>",
+        '#attributes' => [
+            'id' => 'longitude',
+        ],
+    ];
+    $form['submit'] = array(
+        '#type' => 'submit',
+        '#value' => t('Add'),
+    );
+    $form['#validate'][] = 'myblock_form_validate';
+
+    return $form;
+}
+/**
+* My block form
+*/
+function myblock_forms(){
+    if( !user_is_logged_in() ){
+        if(isset($_GET['destination']) && !url_is_external($_GET['destination']) && $_GET['destination'] == MYPOST_SLUG){
+            unset($_GET['destination']);
+            drupal_goto('user/login');
+        }
+    }
+    $forms['myblock_block_form']= array(
+        'callback' => 'myblock_form',
+        'callback arguments' => array('myblock_block_form'),
+    );
+    drupal_add_css(MYBLOCK_DIR . '/assets/css/bootstrap-select.min.css', ['weight' => 0]);
+    drupal_add_css(MYBLOCK_DIR . '/assets/css/myblock.css');
+    drupal_add_js(MYBLOCK_DIR . '/assets/js/myblock.js', array('group' => JS_THEME, 'every_page' => TRUE, 'requires_jquery' => TRUE));
+  return $forms;
+}
+
+function myblock_form_validate(&$form, &$form_state){
+    global $user;
+    if( !$user ){
+        drupal_access_denied();
+    }
+    $form_values = $form_state['values'];
+    extract($form_values);
+    if( empty($title) ){
+        form_set_error('title', t('Please input value for title!'));
+    }
+    if( empty($latitude) || empty($longitude) || empty($address_maps) ){
+        form_set_error('address_maps', t('Please input value for address!'));
+    }
+    if( empty($price) ){
+        form_set_error('price', t('Please input value for price!'));
+    }elseif( !is_numeric( $price ) ){
+        form_set_error('price', t('Please enter a valid number for price'));
+    }
+    if( empty($field_categories) ){
+        form_set_error('price', t('Please choose category'));
+    }
+}
+
+function myblock_node_insert($node){
+    db_update('node')
+        ->fields(array('latitude' => $node->latitude, 'longitude' => $node->longitude))
+        ->condition('nid', $node->nid)
+        ->execute();
+}
+
+function myblock_node_update($node){
+    db_update('node')
+        ->fields(array('latitude' => $node->latitude, 'longitude' => $node->longitude))
+        ->condition('nid', $node->nid)
+        ->execute();
+}
+
+function check_alias($path){
+    $query = db_select('url_alias', 'ul')
+        ->fields('ul')
+        ->condition('alias', $path['alias'])
+        ->condition('language', $path['language']);
+    if (!empty($path['source'])) {
+        $query->condition('source', $path['source'], '<>');
+    }
+    $query->range(0, 1);
+    return $query->execute()->fetchObject();
+}
+
+function get_alias($path, $slug_number = 2){
+    $path_temp = $path;
+    while(1){
+        $getAlias = check_alias($path_temp);
+        if($getAlias){
+            $path_temp = $path;
+            $path_temp['alias'] = implode("-", [$path['alias'], $slug_number] );
+            $slug_number++;
+        }else{
+            $path['alias'] = $path_temp['alias'];
+            break;
+        }
+    }
+    return $path;
+}
+
+function myblock_posts(){
+    global $user;
+    $query = db_select('node', 'n')->extend('PagerDefault');
+    $query->fields('n')->condition('type', 'posts')->condition('uid', $user->uid);
+    $results = $query->limit(variable_get('default_nodes_main', 10))->execute();
+    $row_header = ['', 'Title', 'Content', 'Categories', 'Create modified', 'Action'];
+    $header = [];
+    foreach ( $row_header as $key => $value ){
+       $header[] = ['data' => t($value), 'class' => ['column-' . $key, mb_strtolower($value)]];
+    }
+    $rows =array();
+    $languages = language_list();
+    foreach ($results as $item) {
+       $node = node_load($item->nid);
+       node_build_content($node, 'view');
+       #$node->body = drupal_render($node->content);
+        $node_body_array = field_get_items('node', $node, 'body');
+        $node_body = !empty($node_body_array) ? reset($node_body_array) : ['value' => ''];
+        $node->body = trim_words($node_body['value'], 20);
+        $categories = isset($node->field_categories) && !empty($node->field_categories) ? $node->field_categories[$node->language] : [];
+        $cat = [];
+        if( !empty( $categories ) ){
+            foreach ($categories as $key => $value){
+                if( array_key_exists('taxonomy_term', $value) && !empty($value['taxonomy_term']) ){
+                    $name = $value['taxonomy_term']->name;
+                    if (!empty($name)){
+                        $cat[] = '<a href="' . url(POSTLIST_SLUG) . '/?cat=' . $value['tid'] . '">' . $name . '</a>';
+                    }
+                }
+            }
+        }
+        $operations = '<a class="mypost-edit btn btn-primary btn-xs" href="'.url(MYPOST_SLUG.'/'.$item->nid.'/edit').'" title=""><span class="glyphicon glyphicon-pencil"></span></a>';
+        $operations .= ' <a class="mypost-delete btn btn-danger btn-xs" href="'.url(MYPOST_SLUG.'/'.$item->nid.'/delete').'" title=""><span class="glyphicon glyphicon-trash"></span></a>';
+        $langcode = entity_language('node', $node);
+        $uri = entity_uri('node', $node);
+        if ($langcode != LANGUAGE_NONE && isset($languages[$langcode])) {
+            $uri['options']['language'] = $languages[$langcode];
+        }
+
+        $rows[] =array(
+            $item->nid,
+            'title' => array(
+                'data' => array(
+                    '#type' => 'link',
+                    '#title' => $node->title,
+                    '#href' => $uri['path'],
+                    '#options' => $uri['options'],
+                    '#suffix' => ' ' . theme('mark', array('type' => node_mark($node->nid, $node->changed))),
+                ),
+            ),
+            $node->body,
+            implode(", ", $cat),
+            format_date($node->created, 'article'),
+            #format_date($node->changed, 'article'),
+            $operations
+        );
+    }
+
+    $pager = theme('pager');
+    $output = theme('myblock_post_list',array('header' => $header, 'rows' => $rows, 'pager' => $pager));
+    return $output;
+}

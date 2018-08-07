@@ -1,0 +1,87 @@
+<?php
+/**
+ * @file
+ * implement hooks
+ */
+
+define('NOTIFICATION_IS_NOT_VIEWED', 0);
+define('NOTIFICATION_WAS_VIEWED', 1);
+
+/**
+ * when enabling the module, create table user_notification
+ */
+function notification_enable() {
+    module_load_include('inc', 'notification', 'notification.func');
+
+    if (!db_table_exists('user_notifications')) {
+        create_table_user_notifications();
+    }
+}
+
+function notification_menu() {
+    $items = array (
+        'account/notifications' => array (
+            'title callback' => 'set_title_for_page_notification',
+            'page callback' => 'render_notifications_page',
+            'access callback' => TRUE,
+            'file' => 'notification.func.inc',
+            'menu_name' => 'custom-user-menu'
+        )
+    );
+
+    return $items;
+}
+
+function notification_theme() {
+    $template = array (
+        'notifications' => array (
+            'template' => 'template/notifications',
+        ),
+    );
+
+    return $template;
+}
+
+function set_title_for_page_notification() {
+    module_load_include('inc', 'notification', 'notification.func');
+
+    $title = t('Notifications');
+    $count = count_new_notifications();
+
+    if ($count > 0) {
+        $title .= ' (' . $count . ')';
+    }
+
+    return $title;
+}
+
+function load_more_notifications_form() {
+    $form = array (
+        'page' => array (
+            '#type' => 'hidden',
+            '#default_value' => '1',
+        ),
+        'load_more' => array (
+            '#type' => 'button',
+            '#value' => t('Load more'),
+            '#ajax' => array (
+                'callback' => 'ajax_load_more_notification_callback',
+            ),
+        )
+    );
+
+    $form['#attached']['js'] = array (
+        array (
+            'type'  => 'file',
+            'data' => drupal_get_path('module', 'notification') . '/js/ajax.js',
+        ),
+    );
+
+    return $form;
+}
+
+function ajax_load_more_notification_callback($form, &$form_state) {
+    module_load_include('inc', 'notification', 'notification.func');
+
+    return get_notifications_commands($form_state);
+}

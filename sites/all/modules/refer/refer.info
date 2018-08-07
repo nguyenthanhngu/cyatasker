@@ -1,0 +1,6 @@
+name = Refer A Friend
+description = The module helps users refer a friend
+package = "User"
+core = 7.x
+version = "7.x-1.0"
+

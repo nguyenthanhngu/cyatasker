@@ -1,0 +1,6 @@
+name = Term Follow
+description = Display all terms which user is following
+core = 7.x
+package = User
+core = 7.x
+version = "7.x-1.0"

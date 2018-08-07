@@ -1,0 +1,121 @@
+<?php
+
+/**
+ * Implements hook_schema_alter().
+ */
+function myblock_schema_alter(&$schema) {
+    $latitude = array(
+          'type' => 'float',
+          'size' => 'big',
+          'not null' => FALSE
+      );
+    $longitude = array(
+        'type' => 'float',
+        'size' => 'big',
+        'not null' => FALSE
+    );
+    $address = array(
+        'type' => 'varchar',
+        'length' => 255,
+        'not null' => FALSE,
+        'default' => NULL
+    );
+    $price = array(
+        'type' => 'float',
+        'length' => 11,
+        'not null' => FALSE,
+        'default' => 0
+    );
+
+    $schema['node']['fields']['latitude'] =$latitude;
+    $schema['node']['fields']['longitude'] = $longitude;
+    $schema['node']['fields']['address'] = $address;
+    $schema['node']['fields']['price'] = $price;
+}
+
+/**
+* Increases the module weight.
+* Add categories field when add node
+*/
+function myblock_update_7000(){
+    if(!db_field_exists('node', 'latitude')){
+        $latitude = array(
+            'type' => 'float',
+            'size' => 'big',
+            'not null' => FALSE
+        );
+        db_add_field('node', 'latitude', $latitude);
+    }
+    if(!db_field_exists('node', 'longitude')){
+        $longitude = array(
+            'type' => 'float',
+            'size' => 'big',
+            'not null' => FALSE
+        );
+        db_add_field('node', 'longitude', $longitude);
+    }
+    if(!db_field_exists('node', 'address')){
+        $address = array(
+            'type' => 'varchar',
+            'length' => 255,
+            'not null' => FALSE,
+            'default' => NULL
+        );
+        db_add_field('node', 'address', $address);
+    }
+    $description = t('Use categories to group articles on similar topics into categories.');
+    $vocabulary = (object) array(
+        'name' => t('Categories'),
+        'description' => $description,
+        'machine_name' => 'categories',
+    );
+    $check_voca = taxonomy_vocabulary_machine_name_load($vocabulary->machine_name);
+
+    if( empty($check_voca) ){
+        taxonomy_vocabulary_save($vocabulary);
+    }else{
+        $vocabulary->name = $check_voca->name;
+    }
+    $prior_field = field_read_field(FIELD_CATEGORY, array('include_inactive' => TRUE));
+    if( empty($prior_field) ){
+        $field = array(
+            'field_name' => 'field_' . $vocabulary->machine_name,
+            'type' => 'taxonomy_term_reference',
+            'translatable' => false,
+            'settings' => array(
+              'allowed_values' => array(
+                array(
+                  'vocabulary' => $vocabulary->machine_name,
+                  'parent' => 0,
+                ),
+              ),
+            ),
+        );
+        field_create_field($field);
+
+        $instance = array(
+            'field_name' => FIELD_CATEGORY,
+            'entity_type' => 'node',
+            'label' => $vocabulary->name,
+            'bundle' => 'posts',
+            'widget' => array(
+                'type' => 'options_select',
+                'weight' => -4,
+            ),
+        );
+        field_create_instance($instance);
+    }
+
+}
+
+function myblock_update_7001(){
+    if( !db_field_exists('node', 'price') ){
+        $price = array(
+            'type' => 'float',
+            'length' => 11,
+            'not null' => FALSE,
+            'default' => 0
+        );
+        db_add_field('node', 'price', $price);
+    }
+}

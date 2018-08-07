@@ -1,0 +1,14 @@
+name = User Registration
+description = "Custom register by user on register form"
+version = VERSION
+core = 7.x
+package = User
+
+dependencies[] = user
+
+
+; Information added by drupal.org packaging script on January 1, 1970 - 00:00
+version = "7.x-1.0"
+core = "7.x"
+project = "user_registration"
+datestamp = "1295633801"

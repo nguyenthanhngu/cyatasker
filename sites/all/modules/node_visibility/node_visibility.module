@@ -1,0 +1,321 @@
+<?php
+/**\
+ * @file
+ * implement hooks
+ */
+define('PUBLIC_VISIBILITY', 1);
+define('PRIVATE_VISIBILITY', 2);
+define('NODE_VISIBILITY_LIMIT', 1);
+
+function node_visibility_init() {
+    drupal_add_js(drupal_get_path('module', 'node_visibility') . '/js/bootstrap-tagsinput.min.js');
+    drupal_add_js(drupal_get_path('module', 'node_visibility') . '/js/typeahead.bundle.min.js');
+}
+
+function node_visibility_node_view($node, $view_mode, $langcode) {
+    global $user;
+
+    if ($node->uid != $user->uid && $node->visibility == PRIVATE_VISIBILITY) {
+        if (in_array('anonymous user', $user->roles)) {
+            drupal_access_denied();
+            module_invoke_all('exit');
+            drupal_exit();
+        }
+        else {
+            $count = db_select('node_visibility', 'n')
+                ->fields('n')
+                ->condition('user_name', $user->name, '=')
+                ->condition('nid', $node->nid, '=')
+                ->execute()
+                ->rowCount();
+
+            if ($count == 0) {
+                drupal_access_denied();
+                module_invoke_all('exit');
+                drupal_exit();
+            }
+        }
+    }
+}
+
+function node_visibility_menu() {
+    $items = array (
+        'node/%node/visibility' => array (
+            'title callback' => 'Add users',
+            'page callback' => 'render_node_visibility_add_users_page',
+            'access callback' => 'node_visibility_access_callback',
+        ),
+    );
+
+    return $items;
+}
+
+function node_visibility_access_callback() {
+    global $user;
+    $node = node_load(arg(1));
+
+    if ($user->uid == $node->uid) {
+        return TRUE;
+    }
+
+    return FALSE;
+}
+
+function node_visibility_theme() {
+    $theme = array (
+        'node_visibility_add_users' => array (
+            'template' => 'template/node_visibility',
+        ),
+        'remove_member' => array (
+            'template' => 'template/remove_member',
+        )
+    );
+
+    return $theme;
+}
+
+function render_node_visibility_add_users_page() {
+    $nid = arg(1);
+
+    $variables = array(
+        'set_visibility_form' => drupal_get_form('node_visibility_set_visibility_form'),
+        'add_users_form' => drupal_get_form('node_visibility_add_users_form'),
+        'load_more_form' => drupal_get_form('node_visibility_load_more_form'),
+        'members' => get_members_of_node($nid, 0),
+        'remove_member_theme' => theme('remove_member', array('remove_member_form' => drupal_get_form('node_visibility_remove_member_form')))
+    );
+
+    $variables['set_visibility_form']['nid']['#value'] = $nid;
+
+    return theme('node_visibility_add_users', $variables);
+}
+
+function node_visibility_set_visibility_form() {
+    $node = node_load(arg(1));
+
+    $form['visibility'] = array(
+        '#type' => 'select',
+        '#title' => t('Visibility'),
+        '#options' => array(
+            PUBLIC_VISIBILITY => t('Public'),
+            PRIVATE_VISIBILITY => t('Private'),
+        ),
+        '#default_value' => $node->visibility,
+        '#ajax' => array(
+            'callback' => 'ajax_set_node_visibility_callback',
+            'event' => 'change',
+        ),
+    );
+
+    $form['nid'] = array (
+        '#type' => 'hidden',
+    );
+
+    return $form;
+}
+
+function ajax_set_node_visibility_callback($form, &$form_state) {
+    $node = node_load($form_state['values']['nid']);
+    $node->visibility = $form_state['values']['visibility'];
+    node_save($node);
+}
+
+function node_visibility_add_users_form() {
+    $form['user_names'] = array(
+        '#type' => 'textfield',
+        '#title' => t('Add Users'),
+        '#attributes' => array(
+            'id' => 'tagsinput-typeahead'
+        )
+    );
+
+    $form['search'] = array(
+        '#type' => 'textfield',
+        '#prefix' => '<div style="display:none;">',
+        '#suffix' => '</div>',
+        '#ajax' => array(
+            'callback' => 'ajax_get_user_by_name_callback',
+            'event' => 'change',
+        ),
+    );
+
+    $form['submit'] = array(
+        '#type' => 'submit',
+        '#title' => t('Submit'),
+        '#value' => t('Submit'),
+    );
+
+    $form['#attached']['js'] = array(
+        array(
+            'type'  => 'file',
+            'data' => drupal_get_path('module', 'node_visibility') . '/js/ajax.js',
+        ),
+    );
+
+    $form['#attached']['css'] = array(
+        array(
+            'type'  => 'file',
+            'data' => drupal_get_path('module', 'node_visibility') . '/css/bootstrap-tagsinput.css',
+        ),
+        array(
+            'type'  => 'file',
+            'data' => drupal_get_path('module', 'node_visibility') . '/css/app.css',
+        ),
+    );
+
+    return $form;
+}
+
+function node_visibility_add_users_form_validate($form, &$form_state) {
+    $user_names = $form_state['values']['user_names'];
+
+    if (empty($user_names)) {
+        form_set_error('user_names', t('User names is required.'));
+    }
+
+    $nid = arg(1);
+    $added_names = '';
+
+    $user_names = explode(',', $user_names);
+
+    foreach ($user_names as $user_name) {
+        $users = db_select('node_visibility', 'n')
+            ->fields('n', array('user_name'))
+            ->condition('nid', $nid, '=')
+            ->condition('user_name', $user_name, '=')
+            ->execute()
+            ->fetchAssoc();
+
+        if (!empty($users)) {
+            $added_names .= ', ' . $user_name;
+        }
+    }
+
+    if (!empty($added_names)) {
+        form_set_error('user_names', t(':added_names were added.', array(':added_names', $added_names)));
+    }
+}
+
+function node_visibility_add_users_form_submit($form, &$form_state) {
+    $nid = arg(1);
+    $user_names = explode(',', $form_state['values']['user_names']);
+
+    foreach ($user_names as $user_name) {
+        db_insert('node_visibility')
+            ->fields(array(
+                'nid' => $nid,
+                'user_name' => $user_name,
+            ))
+            ->execute();
+    }
+
+    drupal_set_message(t('You add users to the node successfully.'));
+}
+
+function ajax_get_user_by_name_callback($form, &$form_state) {
+    $search = $form_state['values']['search'];
+
+    $users = db_select('users', 'u')
+        ->fields('u', array('name'))
+        ->condition('name', db_like($search) . '%', 'LIKE')
+        ->range(0, NODE_VISIBILITY_LIMIT)
+        ->execute()
+        ->fetchAll();
+
+    $commands[] = array (
+        'command' => 'ajaxVisibilityCallback',
+        'users' => array_values($users)
+    );
+
+    return array ('#type' => 'ajax', '#commands' => $commands);
+}
+
+function node_visibility_load_more_form() {
+    $form['load_more'] = array (
+        '#type' => 'button',
+        '#value' => t('Load more'),
+        '#ajax' => array (
+            'callback' => 'ajax_get_members_of_node_callback',
+        ),
+    );
+
+    $form['page'] = array (
+        '#type' => 'hidden',
+        '#default_value' => '1',
+    );
+
+    $form['nid'] = array (
+        '#type' => 'hidden',
+        '#value' => arg(1),
+    );
+
+    $form['#attached']['js'] = array(
+        array(
+         'type'  => 'file',
+         'data' => drupal_get_path('module', 'node_visibility') . '/js/ajax.js',
+        ),
+    );
+
+    return $form;
+}
+
+function ajax_get_members_of_node_callback($form, &$form_state) {
+    $members = get_members_of_node($form_state['values']['nid'], $form_state['values']['page']);
+
+    $commands[] = array (
+        'command' => 'ajaxLoadMoreMembersCallback',
+        'members' => drupal_json_encode($members)
+    );
+
+    return array ('#type' => 'ajax', '#commands' => $commands);
+}
+
+function get_members_of_node($nid, $page) {
+    $offset = $page * NODE_VISIBILITY_LIMIT;
+
+    $query = db_select('node_visibility', 'n');
+    $query->join('users', 'u', 'u.name = n.user_name');
+
+    $members = $query->fields('u', array('picture', 'name'))
+        ->condition('n.nid', $nid, '=')
+        ->range($offset, NODE_VISIBILITY_LIMIT)
+        ->execute()
+        ->fetchAll();
+
+    global $base_url;
+
+    foreach ($members as $member) {
+        if (!empty($member->picture)) {
+            $member->picture = file_create_url($member->picture->uri);
+        } else {
+            $member->picture = $base_url . "/themes/bartik/logo.png";
+        }
+    }
+
+    return $members;
+}
+
+function node_visibility_remove_member_form() {
+    $form['user_name'] = array(
+        '#type' => 'hidden',
+    );
+
+    $form['submit'] = array (
+        '#type' => 'submit',
+        '#value' => t('Remove'),
+    );
+
+    return $form;
+}
+
+function node_visibility_remove_member_form_submit($form, &$form_state) {
+    $nid = arg(1);
+    $user_name = $form_state['values']['user_name'];
+
+    db_delete('node_visibility')
+        ->condition('nid', $nid, '=')
+        ->condition('user_name', $user_name, '=')
+        ->execute();
+
+    drupal_set_message(t('You removed :user_name successfully', array(':user_name' => $user_name)));
+}

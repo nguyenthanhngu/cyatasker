@@ -1,0 +1,270 @@
+<?php
+/**
+ * @file
+ * implement hook
+ */
+define('NODE_CLOSED', 1);
+
+function book_task_enable() {
+    $schema = array();
+    book_task_schema_alter($schema);
+    if (!db_field_exists('node', 'tasker_list')) {
+        db_add_field('node', 'tasker_list',  $schema['node']['fields']['tasker_list']);
+    }
+
+    if (!db_field_exists('node', 'price')) {
+        db_add_field('node', 'price',  $schema['node']['fields']['price']);
+    }
+
+    if (!db_field_exists('node', 'closed')) {
+        db_add_field('node', 'closed',  $schema['node']['fields']['closed']);
+    }
+}
+
+function book_task_schema_alter(&$schema) {
+    $schema['node']['fields']['tasker_list'] = array (
+        'type' => 'text',
+    );
+
+    $schema['node']['fields']['price'] = array (
+        'type' => 'float',
+    );
+
+    $schema['node']['fields']['closed'] = array (
+        'type' => 'int',
+    );
+}
+
+function book_task_node_view($node, $view_mode, $langcode) {
+    if ( $node->type == 'posts') {
+        drupal_add_js(drupal_get_path('module', 'book_task') . '/js/book_task.js');
+        global $user;
+
+        $tasker_list = drupal_json_decode($node->tasker_list);
+        $is_poster = is_poster($node->uid);
+
+        if (!$is_poster) {
+            $key = FALSE;
+
+            if (!empty($tasker_list)) {
+                $key = array_search($user->uid, array_column($tasker_list, 'uid'));
+            }
+
+            if (is_int($key)) {
+                $temp = $tasker_list[$key];
+                $tasker_list = array();
+                $tasker_list[] = $temp;
+            }
+            else {
+                $tasker_list = array();
+            }
+
+            $suggest_price_form = drupal_get_form('book_task_suggest_price_form');
+            $suggest_price_form['nid']['#value'] = $node->nid;
+            $node->content['suggest_price'] = array(
+                '#markup' => theme('suggest_price', array ('suggest_price_form' => $suggest_price_form))
+            );
+            $node->content['suggest_price_button'] = array(
+                '#markup' => theme('suggest_price_button')
+            );
+        }
+        else {
+            $approve_task_form = drupal_get_form('book_task_approve_task_form');
+            $approve_task_form['nid']['#value'] =  $node->nid;
+            $node->content['approve_task'] = array(
+                '#markup' => theme('approve_task', array ('approve_task_form' => $approve_task_form))
+            );
+        }
+
+        $node->content['tasker_list'] = array(
+            '#markup' =>  theme('tasker_list', array ('tasker_list' => $tasker_list, 'is_poster' => $is_poster, 'original_price' => $node->price,
+                'node_closed' => $node->closed))
+        );
+    }
+}
+
+function book_task_theme() {
+    $theme = array (
+        'suggest_price' => array (
+            'template' => 'template/suggest_price',
+        ),
+        'suggest_price_button' => array (
+            'template' => 'template/suggest_price_button',
+        ),
+        'approve_task' => array (
+            'template' => 'template/approve_task',
+        ),
+        'tasker_list' => array (
+            'template' => 'template/tasker_list',
+        ),
+    ) ;
+
+    return $theme;
+}
+
+function book_task_preprocess_comment(&$variables) {
+    $variables['can_view'] = can_view($variables['comment'], $variables['node']);
+}
+
+function book_task_comment_insert($comment) {
+    book_task_node_save($comment->nid, "");
+}
+
+function book_task_form_comment_form_alter(&$form, &$form_state) {
+    unset($form['subject']);
+}
+
+function book_task_suggest_price_form() {
+    $form = array (
+        'price' => array(
+            '#type' => 'textfield',
+            '#title' => t('Price'),
+            '#required' => TRUE,
+        ),
+        'nid' => array(
+            '#type' => 'hidden',
+        ),
+        'submit' => array (
+            '#type' => 'submit',
+            '#value' => t('Suggest'),
+        )
+    );
+
+    return $form;
+}
+
+function book_task_suggest_price_form_validate($form, &$form_state) {
+    validate_price_field($form_state['values']['price']);
+}
+
+function book_task_suggest_price_form_submit($form, &$form_state) {
+    $nid = $form_state['values']['nid'];
+    $price = $form_state['values']['price'];
+
+    book_task_node_save($nid, $price);
+}
+
+function book_task_approve_task_form() {
+    $form = array (
+        'name' => array(
+            '#type' => 'textfield',
+            '#title' => t('User'),
+            '#disabled' => TRUE
+        ),
+        'showed_price' => array(
+            '#type' => 'textfield',
+            '#title' => t('price'),
+            '#disabled' => TRUE
+        ),
+        'price' => array(
+            '#type' => 'hidden',
+        ),
+        'nid' => array(
+            '#type' => 'hidden',
+        ),
+        'uid' => array(
+            '#type' => 'hidden',
+        ),
+        'submit' => array (
+            '#type' => 'submit',
+            '#value' => t('Approve'),
+        )
+    );
+
+    return $form;
+}
+
+function book_task_approve_task_form_submit($form, &$form_state) {
+    $task_id = db_insert('task')
+        ->fields(array (
+            'node_id' => $form_state['values']['nid'],
+            'uid' => $form_state['values']['uid'],
+            'price' => $form_state['values']['price'],
+            'status' => 'processing',
+            'created' => REQUEST_TIME,
+            'updated' => REQUEST_TIME,
+        ))
+        ->execute();
+
+    $node = node_load($form_state['values']['nid']);
+    $node->closed = NODE_CLOSED;
+    node_save($node);
+
+    global $base_url;
+
+    drupal_goto($base_url . "/task/" . $task_id);
+}
+
+function validate_price_field($price) {
+    if (!is_numeric($price)) {
+        form_set_error('price', t('Price have to be a number.'));
+    }
+}
+
+function is_poster($uid_creates_the_node) {
+    global $user;
+
+    if($user->uid == $uid_creates_the_node) {
+        return TRUE;
+    }
+
+    return FALSE;
+}
+
+function book_task_node_save($nid, $price) {
+    global $user;
+
+    $node = node_load($nid);
+
+    if ($node->uid != $user->uid) {
+        $tasker_list = drupal_json_decode($node->tasker_list);
+
+        if (!empty($tasker_list)) {
+            $key = array_search($user->uid, array_column($tasker_list, 'uid'));
+        }
+
+        if (isset($key) && is_int($key)) {
+            if ($price != "") {
+                $tasker_list[$key]['price'] = $price;
+            }
+        }
+        else {
+            $tasker_list[] = array (
+                'uid' => $user->uid,
+                'price' => $price
+            );
+        }
+
+        $node->tasker_list = json_encode($tasker_list);
+
+        node_save($node);
+    }
+}
+
+function can_view($comment, $node) {
+    global $user;
+
+    // User can view all comment on his/her node
+    if ($node->uid == $user->uid) {
+       return TRUE;
+    }
+
+    // User can view his/her comment
+    if ($comment->uid == $user->uid) {
+        return TRUE;
+    }
+
+    $parent_comment = db_select('comment', 'c')
+        ->fields('c')
+        ->condition('cid', $comment->pid, '=')
+        ->execute()
+        ->fetchAssoc();
+
+    // User can view comment which other replies his/her comment
+    if (!empty($parent_comment) && $parent_comment['uid'] == $user->uid) {
+        return TRUE;
+    }
+
+    return FALSE;
+}
+?>

@@ -1,0 +1,36 @@
+<?php
+/**
+ * @hook hook_schema_alter
+ * @param $schema
+ */
+function user_profile_schema_alter(&$schema){
+    $schema['users']['fields']['display_name'] = array(
+        'type' => 'varchar',
+        'not null' => FALSE,
+        'length' => 100,
+        'not null' => FALSE,
+        'default' => NULL,
+        'description' => "Full name for user",
+
+    );
+    $schema['users']['fields']['signature'] = array(
+                'type' => 'varchar',
+                'length' => 1000,
+                'not null' => TRUE,
+                'default' => '',
+                'description' => "User's signature.",
+              );
+}
+
+function user_profile_enable(){
+    $schema = [];
+    user_profile_schema_alter($schema);
+    if( !db_field_exists('users', 'display_name') ){
+        db_add_field('users', 'display_name', $schema['users']['fields']['display_name']);
+    }
+}
+
+function user_profile_update_7000(){
+    db_query('ALTER TABLE {users} CHANGE `signature` `signature` VARCHAR(1000) CHARACTER SET utf8 COLLATE utf8_general_ci NOT NULL DEFAULT \'\' COMMENT \'User’s signature.\'');
+    variable_set('user_profile_user_signature', 1000);
+}

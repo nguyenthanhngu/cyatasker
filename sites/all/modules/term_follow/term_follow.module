@@ -1,0 +1,124 @@
+<?php
+/**
+ * @file
+ * implements hooks
+ */
+
+function term_follow_block_info() {
+    $blocks = array(
+        'following' => array(
+            'info' => t('Following'),
+            'cache' => DRUPAL_NO_CACHE,
+        )
+    );
+    return $blocks;
+}
+
+function term_follow_block_view($delta = '') {
+    $block = array();
+
+    switch ($delta) {
+        case 'following':
+            $block['subject'] = t('Following');
+            $block['content'] = term_follow_page();
+            break;
+    }
+
+    return $block;
+}
+
+function term_follow_page() {
+    $term_follow_form = drupal_get_form('term_follow_form');
+
+    $user_term_follows = get_all_term_follow_of_user();
+
+    if (!empty($user_term_follows)) {
+        foreach ($user_term_follows as $follow) {
+            if (!empty($term_follow_form['term_follow'][$follow->tid])) {
+                $term_follow_form['term_follow'][$follow->tid]['#checked'] = TRUE;
+            }
+        }
+    }
+
+    return $term_follow_form;
+}
+
+function term_follow_form() {
+    $term_follow = (array) get_all_term_follow_on_system();
+
+    $form = array (
+        'term_follow' => array (
+            '#type' => 'checkboxes',
+            '#options' => array_combine(array_column($term_follow, 'tid'), array_column($term_follow, 'name')),
+            '#title' => t('Following'),
+            '#ajax' => array (
+                'callback' => 'update_user_following_callback',
+
+            ),
+        ),
+    );
+    
+    $form['#attached']['js'] = array (
+        array (
+            'type'  => 'file',
+            'data' => drupal_get_path('module', 'term_follow') . '/js/ajax.js',
+        ),
+    );
+
+    return $form;
+}
+
+function update_user_following_callback($form, &$form_state) {
+    global $user;
+
+    $tids = $form_state['values']['term_follow'];
+
+    foreach ($tids as $tid => $val) {
+        $count = db_select('user_categories', 'u')
+            ->fields('u')
+            ->condition('uid', $user->uid, '=')
+            ->condition('tid', $tid, '=')
+            ->execute()
+            ->rowCount();
+
+        if ($val > 0) {
+            if (!$count) {
+                db_insert('user_categories')
+                    ->fields(array('uid' => $user->uid, 'tid' => $tid))
+                    ->execute();
+            }
+        }
+        else {
+            if ($count) {
+                db_delete('user_categories')
+                    ->condition('uid', $user->uid, '=')
+                    ->condition('tid', $tid, '=')
+                    ->execute();
+            }
+        }
+    }
+
+    $commands[] = array (
+        'command' => 'ajaxFollowingCallback',
+    );
+
+    return array ('#type' => 'ajax', '#commands' => $commands);
+}
+
+function get_all_term_follow_on_system() {
+    $vocabulary = taxonomy_vocabulary_machine_name_load('categories');
+
+    return taxonomy_term_load_multiple(FALSE, array('vid' => $vocabulary->vid));
+}
+
+function get_all_term_follow_of_user() {
+    global $user;
+
+    $user_term_follow = db_select('user_categories', 'u')
+        ->fields('u', array('tid'))
+        ->condition('uid', $user->uid, '=')
+        ->execute()
+        ->fetchAll();
+
+    return $user_term_follow;
+}

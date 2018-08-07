@@ -1,0 +1,13 @@
+<?php
+function term_follow_update_7002() {
+    $table = array (
+        'description' => 'Store categories which user stored',
+        'fields' => array (
+            'uid' => array ('type' => 'int', 'unsigned' => TRUE, 'not null' => TRUE),
+            'tid' => array ('type' => 'int', 'unsigned' => TRUE, 'not null' => TRUE),
+        ),
+        'primary key' => array('uid', 'tid'),
+    );
+
+    db_create_table('user_categories', $table);
+}

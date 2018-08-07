@@ -1,0 +1,183 @@
+<?php
+/**
+ * @file
+ * implement the module
+ */
+
+/**
+ * when enabling the module, create table refered emails
+ */
+function refer_enable() {
+    if (!db_table_exists('refered_emails')) {
+        create_table_refered_emails();
+    }
+}
+
+function refer_menu() {
+    $items['account/refer-friend'] = array (
+        'title' => t('Refer a friend'),
+        'page callback' => 'refer_friend',
+        'access callback' => TRUE,
+        'menu_name' => 'custom-user-menu'
+    );
+
+    $items['account/refered-emails'] = array (
+        'title' => t('Refered Emails'),
+        'page callback' => 'refered_emails_page',
+        'access callback' => 'is_admin',
+        'menu_name' => 'custom-user-menu'
+    );
+
+    return $items;
+}
+
+function refer_theme() {
+    return array (
+        'refered_emails' => array (
+            'template' => 'template/refered_emails',
+        )
+    );
+}
+
+function refer_friend() {
+    return drupal_get_form('refer_send_email_form');
+}
+
+function refered_emails_page() {
+    $refered_emails = get_refered_emails(0);
+
+    $variables = array (
+        'refered_emails' => $refered_emails,
+        'load_more_form' => drupal_get_form('refer_load_more_form'),
+    );
+
+    return theme('refered_emails', $variables);
+}
+
+function is_admin() {
+    return user_has_role(3);
+}
+
+function refer_send_email_form() {
+    $form = array (
+        'email' => array (
+            '#type' => 'textfield',
+            '#attributes' => array (
+                'placehoder' => 'yourfriendsemail@mail.com'
+            ),
+            '#required' => TRUE,
+        ),
+        'submit' => array(
+            '#type' => 'submit',
+            '#value' => t('Invite'),
+        )
+    );
+
+    return $form;
+}
+
+function refer_send_email_form_validate($form, &$form_state) {
+    $email = $form_state['values']['email'];
+
+    if (!valid_email_address($email)) {
+        form_set_error('email', 'The email is invalid');
+    }
+
+    if (!empty(user_load_by_mail($email))) {
+        form_set_error('email', 'The email is registered');
+    }
+}
+
+function refer_send_email_form_submit($form, &$form_state) {
+    global $user;
+
+    $language = language_default();
+    $content = t(mail_content());
+    $email = $form_state['values']['email'];
+
+    $params['subject'] = t('Hello');
+    $params['body'] = array($content);
+
+    $refer = drupal_mail('smtp', 'smtp-test', $email, $language, $params);
+
+    if ($refer['result']) {
+        db_insert('refered_emails')
+            ->fields(array (
+                'uid' => $user->uid,
+                'name' => $user->name,
+                'email' => $email,
+                'created' => REQUEST_TIME,
+            ))
+            ->execute();
+        drupal_set_message(t('Your refered your friend successfully.'), 'succcess');
+    }
+    else {
+        drupal_set_message(t('Error! Please invite again.'), 'error');
+    }
+}
+
+function mail_content() {
+    $content = "hahdshahdas";
+    return $content;
+}
+
+function create_table_refered_emails() {
+    $table = array (
+        'description' => 'The table store emails which users refered',
+        'fields' => array (
+            'uid' => array ('type' => 'int', 'unsigned' => TRUE, 'not null' => TRUE),
+            'name' => array ('type' => 'varchar', 'length' => 255, 'not null' => TRUE),
+            'email' => array ('type' => 'varchar', 'length' => 255, 'not null' => TRUE),
+            'created' => array ('type' => 'int', 'unsigned' => TRUE, 'not null' => TRUE),
+        )
+    );
+
+    db_create_table('refered_emails', $table);
+}
+
+function refer_load_more_form() {
+    $form = array (
+        'page' => array (
+            '#type' => 'hidden',
+            '#default_value' => '1',
+        ),
+        'load_more' => array (
+            '#type' => 'button',
+            '#value' => t('Load more'),
+            '#ajax' => array (
+                'callback' => 'ajax_load_more_refered_emails_callback',
+            ),
+        )
+    );
+
+    $form['#attached']['js'] = array (
+        array (
+            'type'  => 'file',
+            'data' => drupal_get_path('module', 'refer') . '/js/ajax.js',
+        ),
+    );
+
+    return $form;
+}
+
+function ajax_load_more_refered_emails_callback($form, &$form_state) {
+    $refered_emails = get_refered_emails($form_state['values']['page']);
+
+    $commands[] = array (
+        'command' => 'ajaxReferedEmailsCallback',
+        'refered_emails' => drupal_json_encode($refered_emails),
+    );
+
+    return array ('#type' => 'ajax', '#commands' => $commands);
+}
+
+function get_refered_emails($page) {
+    $offset = $page * 3;
+
+    return db_select('refered_emails', 'r')
+        ->fields('r')
+        ->orderBy('created', 'DESC')
+        ->range($offset, 3)
+        ->execute()
+        ->fetchAll();
+}

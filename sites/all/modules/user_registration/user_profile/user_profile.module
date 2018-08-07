@@ -1,0 +1,442 @@
+<?php
+/*if( isset($_GET['debug'] )){
+    variable_set('file_temporary_path', variable_get('file_public_path', conf_path() . '/files') . '/tmp');
+    echo variable_get('file_temporary_path', NULL);exit;
+    }*/
+define('USER_PROFILE_DIR', drupal_get_path('module', 'user_profile'));
+if( !defined('LIBRARIES_PATH') ) {
+    define('LIBRARIES_PATH', dirname(dirname(__DIR__)) . '/libraries');
+}
+if( !defined('USER_PROFILE_URL') ){
+    global $base_url;
+    define('USER_PROFILE_URL', implode("/", [$base_url, USER_PROFILE_DIR]) );
+}
+define("PICTURE_DEFAULT", USER_PROFILE_URL . "/assets/images/default_profile.png");
+
+/**
+ * Implements hook_theme()
+ */
+function user_profile_theme() {
+    return
+        array(
+        'user_profile_page' => array(
+            'render element' => 'form',
+            'template' => 'theme/user-profile',
+            'preprocess functions' => ['template_preprocess_user_profile_page'],
+        ),
+    );
+}
+
+
+function user_profile_menu() {
+
+    $items['user/profile'] = array(
+        'page callback' => 'user_profile_callback_function',
+        'page arguments' => ['user_profile_form_page'],
+        'access callback' => 'user_profile_edit_access',
+        #'access arguments' => array($user),
+    );
+    $items['user/change-password'] = array(
+        'page callback' => 'user_profile_callback_function',
+        'page arguments' => ['user_change_password_page'],
+        'access callback' => 'user_profile_edit_access',
+        #'access arguments' => array($user),
+    );
+    /*$items['forgotpass'] = array(
+        'page callback' => 'user_profile_callback_function',
+        'page arguments' => ['user_forgotpass_page'],
+        'access callback' => TRUE,
+    );*/
+    return $items;
+}
+
+function user_profile_menu_alter(&$items){
+    $arr_access_url = [
+        'user/%user',
+        'user/%user/view',
+        'user/%user/cancel',
+        'user/%user/cancel/confirm/%/%',
+        'user/%user/edit',
+        'user/%user_category/edit/account',
+    ];
+    foreach ($arr_access_url as $item){
+        $items[$item]['access callback'] = 'user_profile_access';
+    }
+}
+
+function user_profile_access(){
+    return user_access('administer users');
+}
+
+/**
+ * Access callback for user account editing.
+ */
+function user_profile_edit_access() {
+    global $user;
+    return $user->uid > 0;
+}
+
+/**
+ * @hook hook_forms()
+*/
+function user_profile_forms(){
+    $forms['user_profile_form_page']= array(
+        'callback' => 'user_profile_page',
+        'callback arguments' => array('user_profile_form_page'),
+    );
+    $forms['user_change_password_page']= array(
+        'callback' => 'user_change_password_page',
+        'callback arguments' => array('user_change_password_page'),
+    );
+    $forms['user_forgotpass_page']= array(
+        'callback' => 'user_forgotpass_page',
+        'callback arguments' => array('user_forgotpass_page'),
+    );
+    $forms['user_change_avatar_page']= array(
+        'callback' => 'user_change_avatar_page',
+        'callback arguments' => array('user_change_avatar_page'),
+    );
+    drupal_add_css(USER_PROFILE_DIR . '/assets/css/cropper.css', ['weight' => 0]);
+    drupal_add_css(USER_PROFILE_DIR . '/assets/css/profiles.css', ['weight' => 0]);
+    drupal_add_js(USER_PROFILE_DIR . '/assets/js/cropper.js', array('group' => JS_LIBRARY));
+    drupal_add_js(USER_PROFILE_DIR . '/assets/js/yui.min.js', array('group' => JS_LIBRARY));
+    drupal_add_js(USER_PROFILE_DIR . '/assets/js/cropbox.min.js', array('group' => JS_LIBRARY));
+    drupal_add_js(USER_PROFILE_DIR . '/assets/js/profiles.js', array('group' => JS_DEFAULT, 'every_page' => TRUE, 'requires_jquery' => TRUE));
+    return $forms;
+}
+
+function user_change_avatar_page(){
+    $form['picture_upload'] = array(
+        '#type' => 'file',
+        '#title' => "<i class=\"fa fa-upload\" aria-hidden=\"true\"></i> ".t('Upload picture'),
+        '#size' => 48,
+        '#description' => t('Your virtual face or picture. Pictures larger than @dimensions pixels will be scaled down.', array('@dimensions' => variable_get('user_picture_dimensions', '85x85'))) . ' ' . filter_xss_admin(variable_get('user_picture_guidelines', '')),
+        '#attributes' => [
+            'id' => 'picture-upload',
+            'class' => ['inputfile']
+        ],
+        '#id' => 'picture-upload'
+    );
+    $form['actions'] = array('#type' => 'actions', );
+    $form['actions']['submit'] = array(
+        '#type' => 'submit',
+        '#value' => t('Update'),
+        '#attributes' => [
+            'class' => ['btn btn-primary'],
+        ],
+        '#id' => 'btn-save-picture',
+        '#ajax' => [
+            'callback' => 'ajax_picture_upload_callback',
+        ],
+    );
+    $form['#validate'][] = 'user_profile_validate_picture';
+    return $form;
+}
+
+function user_profile_validate_picture($form, &$form_state){
+// If required, validate the uploaded picture.
+    $validators = array(
+        'file_validate_is_image' => array(),
+        'file_validate_image_resolution' => array(variable_get('user_picture_dimensions', '85x85')),
+        'file_validate_size' => array(variable_get('user_picture_file_size', '30') * 1024),
+    );
+
+    // Save the file as a temporary file.
+    $file = file_save_upload('picture_upload', $validators);
+    if ($file === FALSE) {
+        form_set_error('picture_upload', t("Failed to upload the picture image; the %directory directory doesn't exist or is not writable.", array('%directory' => variable_get('user_picture_path', 'pictures'))));
+    }
+    elseif ($file !== NULL) {
+        $form_state['values']['picture_upload'] = $file;
+    }
+   # echo"<pre>";var_dump(__LINE__, __FILE__);print_r( $form_state['values']);echo"</pre>";
+}
+
+function user_edit($form, &$form_state){
+    $account = $form_state['user'];
+    $category = $form['#user_category'];
+    // Remove unneeded values.
+    form_state_values_clean($form_state);
+
+    // Before updating the account entity, keep an unchanged copy for use with
+    // user_save() later. This is necessary for modules implementing the user
+    // hooks to be able to react on changes by comparing the values of $account
+    // and $edit.
+    $account_unchanged = clone $account;
+
+    entity_form_submit_build_entity('user', $account, $form, $form_state);
+    #echo"<pre>";var_dump(__LINE__, __FILE__);print_r( $form_state['values'] );echo"</pre>";
+    // Populate $edit with the properties of $account, which have been edited on
+    // this form by taking over all values, which appear in the form values too.
+    $edit = array_intersect_key((array) $account, $form_state['values']);
+    #echo"<pre>";var_dump(__LINE__, __FILE__);print_r( $edit );echo"</pre>";exit;
+    user_save($account_unchanged, $edit, $category);
+    $account = user_load($account->uid);
+    $form_state['values']['uid'] = $account->uid;
+
+    if ($category == 'account' && !empty($edit['pass'])) {
+        // Remove the password reset tag since a new password was saved.
+        unset($_SESSION['pass_reset_'. $account->uid]);
+    }
+    // Clear the page cache because pages can contain usernames and/or profile information:
+    cache_clear_all();
+
+    return $account;
+}
+
+function ajax_picture_upload_callback($form, &$form_state){
+    global $user;#echo"<pre>";var_dump(__LINE__, __FILE__);print_r( $user );echo"</pre>";
+    if( !empty($user->picture) && !is_object( $user->picture ) ){
+        $user->picture = file_load($user->picture);
+        $form_state['values']['picture'] = $user->picture;
+    }
+    if( !isset($form['#user_category']) ){
+        $form['#user_category'] = 'account';
+    }
+    $form_state['user'] = $user;
+    $account = user_edit($form, $form_state);
+    $file_picture = file_load($account->picture->fid);
+    $picture_url = PICTURE_DEFAULT;
+    $command['command'] = 'changeAvatar';
+    if( file_exists(drupal_realpath($file_picture->uri)) ){
+        $picture_url = file_create_url($file_picture->uri);
+    }else{
+        $command['fail'] = 1;
+        $command['message'] = t('Error: Change avatar fail. Please try again');
+    }
+    $command['fail'] = 1;
+    $command['message'] = t('Error: Change avatar fail. Please try again');
+    $command['picture'] = $picture_url;
+
+    $commands[] = [
+        'command' => 'changeAvatar',
+        'picture' => $picture_url,
+    ];
+    return array('#type' => 'ajax', '#commands' => $commands);
+}
+
+function user_forgotpass_page(){
+    $form['name'] = array('#type' => 'textfield',
+        '#title' => t('Forgotpass'),
+        '#size' => 60,
+        '#maxlength' => USERNAME_MAX_LENGTH,
+        '#required' => TRUE,
+    );
+
+    $form['name']['#description'] = t('Enter your @s username.', array('@s' => variable_get('site_name', 'Drupal')));
+    $form['pass'] = array('#type' => 'password',
+        '#title' => t('Password'),
+        '#description' => t('Enter the password that accompanies your username.'),
+        '#required' => TRUE,
+    );
+    $form['#validate'] = user_login_default_validators();
+    $form['actions'] = array('#type' => 'actions');
+    $form['actions']['submit'] = array('#type' => 'submit', '#value' => t('Log in'));
+    return $form;
+}
+
+/**
+ * Form change password
+ * @return mixed
+ */
+function user_change_password_page(){
+    $form['old_pass'] = array(
+        '#type' => 'password',
+        '#title' => t('Old Password'),
+        '#size' => 60,
+        '#required' => TRUE,
+        '#attributes' => [
+            'placeholder' => t('Old Password'),
+            'id' => 'old_pass',
+        ]
+    );
+    $form['new_pass'] = array(
+        '#type' => 'password',
+        '#title' => t('New Password'),
+        '#required' => TRUE,
+        '#attributes' => [
+            'placeholder' => t('New Password'),
+            'id' => 'new_pass',
+        ]
+    );
+    $form['confirm_pass'] = array(
+        '#type' => 'password',
+        '#title' => t('New Password (again)'),
+        '#required' => TRUE,
+        '#attributes' => [
+            'placeholder' => t('New Password (again)'),
+            'id' => 'confirm_pass',
+        ]
+    );
+    $form['#validate'][] = 'user_profile_change_pass_validate';
+    $form['actions'] = array('#type' => 'actions');
+    $form['actions']['submit'] = array(
+        '#type' => 'submit',
+        '#value' => t('Save'),
+        '#attributes' => [
+            'class' => ['btn btn-primary']
+        ]
+    );
+    return $form;
+}
+
+function user_profile_change_pass_validate($form, &$form_state){
+    $form_values = $form_state['values'];
+    if(strlen($form_values['new_pass']) < 8){
+        form_set_error('new_pass', t('Please enter at least 8 characters.'));
+    }
+    if( $form_values['new_pass'] != $form_values['confirm_pass'] ){
+        form_set_error('confirm_pass', t('Those passwords didn\'t match . Try again.'));
+    }
+}
+
+function user_change_password_page_submit($form, &$form_state){
+    global $user;
+    $form_values = $form_state['values'];
+    $old_pass = $form_values['old_pass'];
+    require_once DRUPAL_ROOT . '/' . variable_get('password_inc', 'includes/password.inc');
+    if (user_check_password($old_pass, $user)) {
+        $form_state['values']['pass'] = $form_values['new_pass'];
+        if( !isset($form['#user_category']) ){
+            $form['#user_category'] = 'account';
+        }
+        $user->picture = file_load($user->picture);
+        $form_state['user'] = $user;
+        $account = user_edit($form, $form_state);
+        if( $account ){
+            drupal_set_message(t('Change password success'), 'status', false);
+        }
+    }else{
+        form_set_error('old_pass', t('Sorry, unrecognized old password'));
+    }
+    #echo"<pre>";var_dump(__LINE__, __FILE__);print_r( $form_state['values'] );echo"</pre>";exit;
+}
+/**
+ * Form edit profile
+ * @return mixed
+ */
+function user_profile_form_page(){
+    global $user;
+    $form['display_name'] = array(
+        '#type' => 'textfield',
+        '#title' => t('Name'),
+        '#size' => 60,
+        '#default_value' => $user->uid > 0 ? $user->display_name : '',
+    );
+    $form['mail'] = array(
+        '#type' => 'textfield',
+        '#title' => t('E-mail address'),
+        '#maxlength' => EMAIL_MAX_LENGTH,
+        '#required' => TRUE,
+        '#default_value' => $user->uid > 0 ? $user->mail : '',
+    );
+
+    $form['phone_number'] = array(
+        '#type' => 'textfield',
+        '#title' => t('Phone number'),
+        '#required' => TRUE,
+        '#default_value' => $user->uid > 0 ? $user->phone_number : '',
+    );
+
+
+    $form['signature'] = array(
+        '#type' => 'textarea',
+        '#title' => t('Description'),
+        '#default_value' => $user->uid > 0 ? $user->signature : '',
+    );
+    $form['#validate'][] = 'user_profile_form_page_validate';
+    $form['actions'] = array('#type' => 'actions');
+    $form['actions']['submit'] = array(
+        '#type' => 'submit',
+        '#value' => t('Save'),
+        '#attributes' => [
+            'class' => ['btn btn-primary']
+        ]
+    );
+    return $form;
+}
+
+function check_phone_number($phone_number){
+    global $user;
+    $result = db_select('users', 'u')->fields('u')
+        ->condition('phone_number', db_escape_field($phone_number))
+        ->condition('u.uid', $user->uid, '!=')
+        ->execute()->fetchObject();
+    return $result;
+}
+
+function check_user_mail($mail){
+    $result = db_select('users', 'u')->fields('u')->condition('mail', db_escape_field($mail))->execute()->fetchObject();
+    return $result;
+}
+
+function user_profile_form_page_validate($form, &$form_state){
+    if ($error = user_validate_mail($form_state['values']['mail'])) {
+        form_set_error('mail', $error);
+    }
+    if( check_user_mail($form_state['values']['mail'])){
+        form_set_error('mail', t('Email address already exists'));
+    }
+    if( check_phone_number($form_state['values']['phone_number'])){
+        form_set_error('phone_number', t('Phone number already exists'));
+    }
+    if( strlen($form_state['values']['signature']) > variable_get('user_profile_user_signature', 1000) ){
+        form_set_error('signature', t('Description more than 1000 word'));
+    }
+}
+
+function user_profile_form_page_submit($form, &$form_state){
+    global $user;
+    $form_values = $form_state['values'];
+    if( !isset($form['#user_category']) ){
+        $form['#user_category'] = 'account';
+    }
+    $form_values['signature_format'] = 'plain_text';
+    $user->picture = file_load($user->picture);
+    $form_state['user'] = $user;
+    $account = user_edit($form, $form_state);
+    if( $account ){
+        drupal_set_message(t('Change profile success'), 'status', false);
+    }
+}
+
+function template_preprocess_user_profile_page(&$variables){
+    global $user;
+    $variables['classes_array'] = [];
+    $variables['attributes_array'] = array();
+    $variables['title_attributes_array'] = array();
+    $variables['content_attributes_array'] = array();
+    if( isset($variables['user_change_avatar_form']) && !empty($variables['user_change_avatar_form']) ){
+       $variables['user_picture_form'] = drupal_render($variables['user_change_avatar_form']);
+       unset($variables['user_change_avatar_form']);
+       $variables['user_profile_form'] = drupal_render($variables['form']);
+       unset($variables['user_profile_page_form']);
+    }else{
+        $variables['user_profile_form'] = drupal_render($variables['form']);
+    }
+    $file_picture = file_load($user->picture);
+    $picture_url = PICTURE_DEFAULT;
+    if( $file_picture ){
+        $file_uri = file_create_url($file_picture->uri);
+        if( file_exists(drupal_realpath($file_picture->uri)) ){
+            $picture_url = $file_uri;
+        }
+    }
+    $variables['picture'] = $picture_url;
+    $variables['full_name'] = isset($user->display_name) && !empty($user->display_name) ? $user->display_name : $user->mail;
+    #echo"<pre>";var_dump(__LINE__, __FILE__);print_r( $variables['user_change_avatar_form'] );echo"</pre>";exit;
+
+}
+
+
+function user_profile_callback_function($form_id){
+    $form_user_profile = drupal_get_form($form_id);
+    #if( $form_id == 'user_profile_form_page' ){
+        $form_user['form'] = $form_user_profile;
+        $form_user['user_change_avatar_form'] = drupal_get_form('user_change_avatar_page');
+        $form_user_profile = $form_user;
+    #}
+    #echo"<pre>";var_dump(__LINE__, __FILE__);print_r( $form_user_profile);echo"</pre>";exit;
+    #echo"<pre>";var_dump(__LINE__, __FILE__);print_r( $form_user_profile );echo"</pre>";
+    return theme('user_profile_page', $form_user_profile);
+}

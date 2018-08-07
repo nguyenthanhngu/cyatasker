@@ -1,0 +1,53 @@
+name = CyaTasker Theme
+description = Tableless, bootstrap width theme.
+core = 7.x
+engine = phptemplate
+
+; STYLESHEETS
+;stylesheets[all][] = assets/css/materialize.css
+stylesheets[all][] = assets/css/normalize.css
+stylesheets[all][] = assets/css/fakeLoader.css
+stylesheets[all][] = assets/css/fontawesome-all.min.css
+stylesheets[all][] = assets/css/bootstrap.min.css
+stylesheets[all][] = assets/css/animate.min.css
+stylesheets[all][] = assets/css/ei-slider.css
+stylesheets[all][] = assets/css/main.css
+stylesheets[all][] = style_mobile.css
+
+stylesheets[all][] = style.css
+
+
+; REGIONS
+regions[content] = Content
+regions[header] = Header
+regions[highlighted] = Highlighted
+regions[sidebar_left] = Left sidebar
+regions[sidebar_first] = Right sidebar
+regions[footer] = Footer
+regions[help] = Help
+regions[page_top] = Page top
+regions[page_bottom] = Page bottom
+regions[header_menu] = Header Menu
+regions[form_search] = Form search
+regions[paging] = Page Navigaion
+settings[shortcut_module_link] = 0
+
+; FEATURES
+features[] = logo
+features[] = name
+features[] = slogan
+features[] = search
+features[] = favicon
+features[] = main_menu
+features[] = secondary_menu
+features[] = comment_user_picture
+features[] = node_user_picture
+
+; SETTINGS
+settings[cyatemplate_mission] = ''
+
+; Information added by
+version = "7.x-1.4"
+core = "7.x"
+project = "cyatemplate"
+datestamp = "1341479835"

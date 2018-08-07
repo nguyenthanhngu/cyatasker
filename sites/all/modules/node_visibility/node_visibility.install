@@ -1,0 +1,34 @@
+<?php
+function node_visibility_update_7004() {
+    $schema = array();
+    node_visibility_schema_alter($schema);
+
+    if (!db_field_exists('node', 'visibility')) {
+        db_add_field('node', 'visibility',  $schema['node']['fields']['visibility']);
+    }
+
+    if (!db_table_exists('node_visibility')) {
+        create_table_node_visibility();
+    }
+}
+
+function node_visibility_schema_alter(&$schema) {
+    $schema['node']['fields']['visibility'] = array (
+        'type' => 'int',
+        'not null' => TRUE,
+        'default' => 1,
+    );
+}
+
+function create_table_node_visibility() {
+    $table = array (
+        'description' => 'Store members of nodes',
+        'fields' => array (
+            'nid' => array ('type' => 'int', 'unsigned' => TRUE, 'not null' => TRUE),
+            'user_name' => array ('type' => 'varchar', 'length' => 60, 'not null' => TRUE, 'default' => ''),
+        ),
+        'primary key' => array('nid', 'user_name'),
+    );
+
+    db_create_table('node_visibility', $table);
+}

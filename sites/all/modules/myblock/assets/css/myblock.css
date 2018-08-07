@@ -1,0 +1,102 @@
+.parent-node-map{
+    width: 100%;
+    height: 400px;
+    margin-bottom: 20px;
+}
+#node-map{
+    width: 100%;
+    height: 100%;
+}
+.err-not-found-map{
+    display: block;
+    color:red;
+    font-style: italic;
+}
+#myblock-block-form textarea{
+    min-height: 80px;
+}
+.error{
+    color:red;
+    font-style: italic;
+    font-weight: normal;
+}
+
+.pagination-post-list{
+    margin-top: 20px;
+}
+
+.pagination-post-list .item-list .pager li.pager-current{
+    display: inline-block;
+    padding: 5px 14px;
+    border: 1px solid #ddd;
+    background: #f0f0f0;
+    border-radius: 15px;
+}
+.pagination-post-list .item-list .pager li{
+    margin: 0;
+}
+#myblock-delete-confirm #edit-cancel{
+    margin-right: 20px;
+    background: #555;
+    color: #fff;
+    outline: 0;
+    border: none;
+    padding: 8px 20px;
+}
+#myblock-delete-confirm #edit-submit{
+    margin-right: 20px;
+    background: #d9534f;
+    color: #fff;
+    outline: 0;
+    border: none;
+    padding: 5px 20px;
+}
+@media only screen and (max-width: 800px) {
+
+    /* Force table to not be like tables anymore */
+    #myblock-more-tables table,
+    #myblock-more-tables thead,
+    #myblock-more-tables tbody,
+    #myblock-more-tables th,
+    #myblock-more-tables td,
+    #myblock-more-tables tr {
+        display: block;
+    }
+
+    /* Hide table headers (but not display: none;, for accessibility) */
+    #myblock-more-tables thead tr {
+        position: absolute;
+        top: -9999px;
+        left: -9999px;
+    }
+
+    #myblock-more-tables tr { border: 1px solid #ccc; }
+
+    #myblock-more-tables td {
+        /* Behave  like a "row" */
+        border: none;
+        border-bottom: 1px solid #eee;
+        position: relative;
+        padding-left: 50%;
+        white-space: normal;
+        text-align:left;
+    }
+
+    #myblock-more-tables td:before {
+        /* Now like a table header */
+        position: absolute;
+        /* Top/left values mimic padding */
+        top: 6px;
+        left: 6px;
+        width: 45%;
+        padding-right: 10px;
+        white-space: nowrap;
+        text-align:left;
+        font-weight: bold;
+    }
+
+    /*
+    Label the data
+    */
+    #myblock-more-tables td:before { content: attr(data-title); }
+}

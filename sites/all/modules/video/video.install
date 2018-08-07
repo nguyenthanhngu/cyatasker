@@ -1,0 +1,16 @@
+<?php
+function video_update_7000() {
+    $schema = array();
+    video_schema_alter($schema);
+
+    if (!db_field_exists('node', 'video')) {
+        db_add_field('node', 'video',  $schema['node']['fields']['video']);
+    }
+}
+
+function video_schema_alter(&$schema) {
+    $schema['node']['fields']['video'] = array (
+        'type' => 'varchar',
+        'length' => 255
+    );
+}

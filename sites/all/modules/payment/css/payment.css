@@ -1,0 +1,17 @@
+.hide {
+    display: none;
+}
+
+.payment-date > div >label  {
+    display: inline;
+}
+
+.payment-date > div > input {
+    display: inline;
+    width: 70%;
+}
+
+.nav-tabs > li {
+    margin-right: 15px;
+    font-size: 18px;
+}

@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Generator: Adobe Illustrator 21.1.0, SVG Export Plug-In . SVG Version: 6.00 Build 0)  -->
+<svg version="1.1" baseProfile="basic" id="Layer_1"
+	 xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" x="0px" y="0px" viewBox="0 0 101.3 132.7"
+	 xml:space="preserve">
+<g>
+	<g>
+		<path fill="#BD3E29" d="M93.4,51.7c0,30.4-42.7,75.4-42.7,75.4S7.9,82.1,7.9,51.7c0-30.4,19.1-46.1,42.7-46.1S93.4,21.3,93.4,51.7
+			z"/>
+		<circle fill="#FFFFFF" stroke="#E7A49A" stroke-width="2.5162" stroke-miterlimit="10" cx="50.7" cy="48.9" r="32.8"/>
+		<g>
+			<g>
+				<rect x="45.2" y="29" fill="#BD3E29" width="10.9" height="39.7"/>
+			</g>
+			<g>
+				<rect x="30.8" y="43.4" fill="#BD3E29" width="39.7" height="10.9"/>
+			</g>
+		</g>
+		<path opacity="0.23" fill="#FFFFFF" d="M50.7,5.6v121.5c0,0,42.7-45,42.7-75.4C93.4,21.3,74.3,5.6,50.7,5.6z"/>
+	</g>
+</g>
+</svg>

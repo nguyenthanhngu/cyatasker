@@ -1,0 +1,10 @@
+{
+  "require": {
+    "google/apiclient": "^2.0",
+    "google/recaptcha": "^1.1",
+    "facebook/graph-sdk": "^5.6.1",
+    "phpoffice/phpexcel": "^1.8.1",
+    "geoip/geoip": "~1.16",
+    "geoip2/geoip2": "~2.0"
+  }
+}

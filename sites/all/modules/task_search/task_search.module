@@ -1,0 +1,664 @@
+<?php
+
+define('TYPE_SEARCH', 'task');
+if( !defined('LIBRARIES_PATH') ) {
+    define('LIBRARIES_PATH', dirname(dirname(__DIR__)) . '/libraries');
+}
+
+/**
+ * Implements hook_search_info().
+ */
+function task_search_search_info(){
+    return array(
+        'title' => t(''),
+        'path' => TYPE_SEARCH,
+    );
+}
+function task_search_theme(){
+    $path = drupal_get_path('module', 'task_search') . '/';
+    // Panels integration.
+    #db_query_range($query, $from, $count, array $args = array(), array $options = array())
+    $router_item = db_query_range('SELECT page_callback FROM {menu_router} WHERE path = :path', 0, 1, array(':path' => 'search/node/%'))->fetchAssoc();
+    if ($router_item['page_callback'] == 'page_manager_search_page') {
+        #unset($custom_search_theme_array['search_results'], $custom_search_theme_array['search_result']);
+    }
+    if ($router_item['page_callback'] == 'search_view') {
+        #db_update('menu_rooter')
+    }
+
+    return array(
+        'task_search_block_form' => array(
+            'render element' => 'form',
+            'template' => 'task_search-block-form',
+        ),
+        'task_search_ajax_results' => array (
+            'variables' => array('results' => NULL, 'module' => NULL),
+            'path'      => $path,
+            'file'      => 'includes/task_search.pages.inc',
+            'template' => 'theme/task_search-ajax-results',
+        ),
+        'task_search_result' => array(
+            'variables' => array('result' => NULL, 'module' => NULL),
+            'path'      => $path,
+            'file'      => 'includes/task_search.pages.inc',
+            'template'  => 'theme/task_search-result',
+        ),
+        'task_search_results' => array(
+            'variables' => array('results' => NULL, 'module' => NULL),
+            'path'      => $path,
+            'file'      => 'includes/task_search.pages.inc',
+            'template'  => 'theme/task_search-results',
+        ),
+    );
+}
+
+
+/**
+ * Implements hook_permission().
+ */
+function task_search_permission() {
+    return array(
+        'administer search' => array(
+            'title' => t('Administer search'),
+        ),
+        'search content' => array(
+            'title' => t('Use search'),
+        ),
+        'use advanced search' => array(
+            'title' => t('Use advanced search'),
+        ),
+    );
+}
+
+/**
+ * Implements hook_menu().
+ */
+
+function task_search_menu(){
+    $default_info = task_search_get_default_module_info();
+    $thisModule = drupal_get_path('module', 'task_search');
+    $items['task'] = array(
+        'title' => 'Search',
+        'page callback' => 'task_search_view',
+        'access callback' => 'search_is_active',
+        'type' => MENU_SUGGESTED_ITEM,
+        'file' => 'includes/task_search.pages.inc',
+    );
+    $items['task/?keys=%'] = array(
+        // The page callback also invokes drupal_set_title() in case
+        // the menu router's title is overridden by a menu link.
+        'page callback' => 'task_search_view',
+        'page arguments' => array(1),
+        'file' =>  'includes/task_search.pages.inc',
+    );
+    if ($default_info) {
+        foreach (task_search_get_info() as $module => $search_info) {
+            $path = 'search/' . $search_info['path'];
+            unset($items[$path]);
+            unset($items["$path/%menu_tail"]);
+            $items[$path] = array(
+                'title' => $search_info['title'],
+                'page callback' => 'task_search_view',
+                'page arguments' => array($module, ''),
+                'access callback' => '_search_menu_access',
+                'access arguments' => array($module),
+                'type' => MENU_CALLBACK,
+                'file' => 'includes/task_search.pages.inc',
+                'weight' => $module == $default_info['module'] ? -10 : 0,
+            );
+            $items["$path/%menu_tail"] = array(
+                'title' => $search_info['title'],
+                'load arguments' => array('%map', '%index'),
+                'page callback' => 'task_search_view',
+                'page arguments' => array($module, 2),
+                'access callback' => '_search_menu_access',
+                'access arguments' => array($module),
+                // The default local task points to its parent, but this item points to
+                // where it should so it should not be changed.
+                'type' => MENU_CALLBACK,
+                'file' => 'includes/task_search.pages.inc',
+                'weight' => 0,
+                // These tabs are not subtabs.
+                'tab_root' => 'search/' . $default_info['path'] . '/%',
+                // These tabs need to display at the same level.
+                'tab_parent' => 'search/' . $default_info['path'],
+            );
+        }
+    }
+    $items['admin/config/search/task_search'] = [
+        'title'             => 'Task Search',
+        'description'       => 'Customize the default search, change labels, default texts, ordering, and display content types and taxonomy selectors.',
+        'page callback'     => 'drupal_get_form',
+        'page arguments'    => array('task_search_admin'),
+        'access arguments'  => array('administer task search'),
+        'file'              => 'includes/task_search.admin.inc',
+    ];
+    return $items;
+}
+
+/**
+ * Implements hook_form_alter().
+ */
+function task_search_form_alter(&$form, &$form_state, $form_id) {
+    switch ( $form_id ){
+        case 'search_block_form':
+        case 'task_search_block_form':
+            #if(user_access('use task search content')){
+                $form[$form_id]['#title'] = '';
+                $form[$form_id]['#attributes'] = [
+                    'title' => '',
+                    'placeholder' => t('Search for a task'),
+                    'id' => 's'
+                ];
+                drupal_add_css(drupal_get_path('module', 'task_search') . '/assets/css/task-search.css');
+                drupal_add_js(drupal_get_path('module', 'task_search') . '/assets/js/task-search.js', array('group' => JS_THEME, 'every_page' => TRUE, 'requires_jquery' => TRUE));
+                $form['actions']['submit'] = array(
+                    '#type' => 'submit',
+                    '#value' => '<svg width="16px" height="16px" viewBox="0 0 16 16" version="1.1" xmlns="http://www.w3.org/2000/svg" data-reactid="36">
+                      <g id="Browse-Topic-Page-V2" stroke="none" stroke-width="1" fill="none" fill-rule="evenodd" transform="translate(-293.000000, -23.000000)" data-reactid="38">
+                          <g id="new-nav" fill="#333333" data-reactid="39"><g id="search" transform="translate(293.000000, 22.000000)" data-reactid="40"><path d="M11.355485,11.4503883 L16.0066609,16.1015642 L15.1015642,17.0066609 L10.4503883,12.355485 C9.34711116,13.2583262 7.93681293,13.8 6.4,13.8 C2.8653776,13.8 0,10.9346224 0,7.4 C0,3.8653776 2.8653776,1 6.4,1 C9.9346224,1 12.8,3.8653776 12.8,7.4 C12.8,8.93681293 12.2583262,10.3471112 11.355485,11.4503883 Z M6.4,12.52 C9.22769792,12.52 11.52,10.2276979 11.52,7.4 C11.52,4.57230208 9.22769792,2.28 6.4,2.28 C3.57230208,2.28 1.28,4.57230208 1.28,7.4 C1.28,10.2276979 3.57230208,12.52 6.4,12.52 Z" id="Loupe-Copy" data-reactid="41"></path></g></g></g>
+                  </svg>',
+                    '#attributes' => [
+                        'class' => ['bsh'],
+                    ],
+                );
+                $form['#custom_search_types'] = [TYPE_SEARCH];
+                $form['#submit'] = ['task_search_form_submit'];
+#echo"<pre>";print_r($form);echo"</pre>";exit;
+
+        #}
+            break;
+    }
+}
+
+function task_search_form_submit($form, &$form_state){
+    $search_types = task_search_get_default_module_info();
+    if( $search_types ) {
+        $type = 'node';
+        $types = (isset($form['#custom_search_types'])) ? $form['#custom_search_types'] : array();
+        if (in_array(current($types), $search_types)) {
+            $type = current($types);
+            $info = module_invoke($type, 'search_info');
+            $path = (isset($info['path'])) ? $info['path'] : $type;
+        }
+
+        $keys = trim($form_state['values'][$form_state['values']['form_id']]);
+        /*$search_path = array(
+            'path' => 'search/' . $path . '/' . $keys,
+            'query' => array(),
+        );*/
+        $form_state['redirect'] = 'search/task/?keys=' . $keys;
+        $_GET['destination'] = $form_state['redirect'];
+    }else{
+        form_set_error(NULL, t('Search is currently disabled.'), 'error');
+    }
+}
+
+/**
+ * Returns information about the default search module.
+ *
+ * @return
+ *    The search_get_info() array element for the default search module, if any.
+ */
+function task_search_get_default_module_info() {
+    $info = task_search_get_info();
+    $default = variable_get('search_default_module', TYPE_SEARCH);
+    if (isset($info[$default])) {
+        return $info[$default];
+    }
+
+    // The variable setting does not match any active module, so just return
+    // the info for the first active module (if any).
+    return reset($info);
+}
+
+/**
+ * Returns information about available search modules.
+ *
+ * @param $all
+ *   If TRUE, information about all enabled modules implementing
+ *   hook_search_info() will be returned. If FALSE (default), only modules that
+ *   have been set to active on the search settings page will be returned.
+ *
+ * @return
+ *   Array of hook_search_info() return values, keyed by module name. The
+ *   'title' and 'path' array elements will be set to defaults for each module
+ *   if not supplied by hook_search_info(), and an additional array element of
+ *   'module' will be added (set to the module name).
+ */
+function task_search_get_info($all = FALSE) {
+    $search_hooks = &drupal_static(__FUNCTION__);
+
+    if (!isset($search_hooks)) {
+        foreach (module_implements('search_info') as $module) {
+            $search_hooks[$module] = call_user_func($module . '_search_info');
+            // Use module name as the default value.
+            $search_hooks[$module] += array('title' => $module, 'path' => $module);
+            // Include the module name itself in the array.
+            $search_hooks[$module]['module'] = $module;
+        }
+    }
+
+    if ($all) {
+        return $search_hooks;
+    }
+    $active = variable_get('search_active_modules', array(TYPE_SEARCH, 'node', 'user'));
+    return array_intersect_key($search_hooks, array_flip($active));
+}
+
+
+
+/**
+ * Execute a search for a set of key words.
+ *
+ * Use database API with the 'PagerDefault' query extension to perform your
+ * search.
+ *
+ * If your module uses hook_update_index() and search_index() to index its
+ * items, use table 'search_index' aliased to 'i' as the main table in your
+ * query, with the 'SearchQuery' extension. You can join to your module's table
+ * using the 'i.sid' field, which will contain the $sid values you provided to
+ * search_index(). Add the main keywords to the query by using method
+ * searchExpression(). The functions search_expression_extract() and
+ * search_expression_insert() may also be helpful for adding custom search
+ * parameters to the search expression.
+ *
+ * See node_search_execute() for an example of a module that uses the search
+ * index, and user_search_execute() for an example that doesn't use the search
+ * index.
+ *
+ * @param $keys
+ *   The search keywords as entered by the user.
+ * @param $conditions
+ *   An optional array of additional conditions, such as filters.
+ *
+ * @return
+ *   An array of search results. To use the default search result
+ *   display, each item should have the following keys':
+ *   - 'link': Required. The URL of the found item.
+ *   - 'type': The type of item (such as the content type).
+ *   - 'title': Required. The name of the item.
+ *   - 'user': The author of the item.
+ *   - 'date': A timestamp when the item was last modified.
+ *   - 'extra': An array of optional extra information items.
+ *   - 'snippet': An excerpt or preview to show with the result (can be
+ *     generated with search_excerpt()).
+ *   - 'language': Language code for the item (usually two characters).
+ *
+ * @ingroup search
+ */
+function task_search_search_execute($params = NULL, $conditions = NULL) {
+    // Build matching conditions
+    global $user;
+    $keys = '';
+    $query = db_select('node', 'n')->extend('PagerDefault');
+    if( $user && db_table_exists('user_categories') && !isset($_REQUEST['keys']) && !isset($_GET['cat']) ){
+        $term_follows = db_select('user_categories', 'uc')->fields('uc', ['tid'])
+            ->condition('uid', $user->uid)->execute()->fetchAll();
+        $termIDs = [];
+        if( !empty($term_follows) ) {
+            foreach ($term_follows as $key => $term) {
+                $termIDs[] = $term->tid;
+            }
+        }
+        $params['cat'] = $termIDs;
+    }
+
+    $query = get_posts_by_conditions($query, $params);
+    #print $query; exit;
+    $find = $query->limit(variable_get('default_nodes_main', 10))->execute();
+    #$find = [];
+
+    $results = array();
+    $locations = [];
+    foreach ($find as $item) {
+
+        // Build the node body.
+        $node = node_load($item->nid);
+        $field_img = isset($node->field_image) ? $node->field_image : [];
+        $image_url = '';
+        if( !empty( $field_img ) ){
+            $field_img = $field_img['und'][0]['uri'];
+            $image_url = file_create_url( $field_img );
+        }
+        node_build_content($node, 'search_result');
+        $node->body = drupal_render($node->content);
+
+        $latitude = !empty( $node->latitude ) ? $node->latitude : 0;
+        $longitude = !empty( $node->longitude ) ? $node->longitude : 0;
+        // Fetch comments for snippet.
+        #$node->rendered .= ' ' . module_invoke('comment', 'node_update_index', $node);
+        // Fetch terms for snippet.
+        #$node->rendered .= ' ' . module_invoke('taxonomy', 'node_update_index', $node);
+
+        $extra = module_invoke_all('node_search_result', $node);
+        $link = url('node/' . $item->nid, array('absolute' => TRUE));
+        $price = isset($node->price) ? $node->price : '';
+        $address = isset($node->address) ? $node->address : '';
+        $results[] = array(
+            'id' => $item->nid,
+            'link' => $link,
+            'type' => check_plain(node_type_get_name($node)),
+            'title' => $node->title,
+            'user' => theme('username', array('account' => $node)),
+            'date' => $node->changed,
+            'node' => $node,
+            'image_url' => $image_url,
+            'extra' => $extra,
+            'score' => isset($item->calculated_score) ? $item->calculated_score : '',
+            'snippet' => search_excerpt($keys, $node->body),
+            'latitude' => $latitude,
+            'longitude' => $longitude,
+            'price'     => $price,
+            'address'     => $address,
+            'comment_count'   => isset($item->count_comment) ? $item->count_comment : 0,
+            'created' => date('l, jS F Y', $node->created),
+        );
+        $locations[] = [
+            'href' => $link,
+            'id' => "post-".$item->nid,
+            'image' => $image_url,
+            'title' => $node->title,
+            'price' => $price,
+            'address'     => $address,
+            'latitude' => $latitude,
+            'longitude' => $longitude,
+            'created' => date('l, jS F Y', $node->created),
+        ];
+    }
+    return ['results' => $results, 'locations' => $locations];
+}
+
+function task_search_search_page($results){
+    $results = array(
+        '#theme' => 'task_search_results',
+        '#results' => $results,
+        '#module' => 'task_search',
+    );
+    return $results;
+}
+
+
+function search_advance_form_callback($form, &$form_state){
+    $commands = array();
+    $form_values = $form_state['values'];
+    extract($form_values);
+    $fields = compact('price', 'cat', 'km', 'latitude', 'longitude');
+    $fields['keys'] = $_REQUEST['keys'];
+    $query = db_select('node', 'n')->extend('PagerDefault');
+    $query = get_posts_by_conditions($query, $fields);
+    $finds = $query->limit(variable_get('default_nodes_main', 10))->execute()->fetchAll();
+    $results = array();
+    $locations = [];
+    $lat = 10.769481;
+    $lng = 106.70196199999998;
+    $output = '';
+    foreach ($finds as $item) {
+
+        // Build the node body.
+        $node = node_load($item->nid);
+        $field_img = isset($node->field_image) ? $node->field_image : [];
+        $image_url = '';
+        if( !empty( $field_img ) ){
+            $field_img = $field_img['und'][0]['uri'];
+            $image_url = file_create_url( $field_img );
+        }
+        node_build_content($node, 'search_result');
+        $node->body = drupal_render($node->content);
+
+        $latitude = !empty( $node->latitude ) ? $node->latitude : $lat;
+        $longitude = !empty( $node->longitude ) ? $node->longitude : $lng;
+        // Fetch comments for snippet.
+        #$node->rendered .= ' ' . module_invoke('comment', 'node_update_index', $node);
+        // Fetch terms for snippet.
+        #$node->rendered .= ' ' . module_invoke('taxonomy', 'node_update_index', $node);
+
+        $extra = module_invoke_all('node_search_result', $node);
+        $link = url('node/' . $item->nid, array('absolute' => TRUE));
+        $price = isset($node->price) ? $node->price : '';
+        $address = isset($node->address) ? $node->address : '';
+        $results[] = array(
+            'id' => $item->nid,
+            'link' => $link,
+            'type' => check_plain(node_type_get_name($node)),
+            'title' => $node->title,
+            'user' => theme('username', array('account' => $node)),
+            'date' => $node->changed,
+            'node' => $node,
+            'image_url' => $image_url,
+            'extra' => $extra,
+            'score' => isset($item->calculated_score) ? $item->calculated_score : '',
+            #'snippet' => search_excerpt($keys, $node->body),
+            'latitude' => $latitude,
+            'longitude' => $longitude,
+            'price'     => $price,
+            'address'     => $address,
+            'comment_count'   => isset($item->count_comment) ? $item->count_comment : 0,
+            'created' => date('l, jS F Y', $node->created),
+        );
+        $locations[] = [
+            'href' => $link,
+            'id' => "post-".$item->nid,
+            'image' => $image_url,
+            'title' => $node->title,
+            'price' => $price,
+            'address'     => $address,
+            'latitude' => $latitude,
+            'longitude' => $longitude,
+            'created' => date('l, jS F Y', $node->created),
+
+        ];
+    }
+    //$results = empty($results) ? [''] : $results;
+    $variables['results'] = $results;
+    $variables['module'] = 'task_search';
+    $variables['results']['locations'] = $locations;
+    $variables['keys'] = $form_values['keys'];
+    foreach (['price', 'cat', 'km', 'polygon'] as $item){
+        $variables[$item] = $form_values[$item];
+    }
+    $output = theme('task_search_ajax_results', $variables);
+    #$pager = theme('pager', array('tags' => NULL));
+
+    #if( !empty($results) ) {
+        $commands[] = [
+            'command' => 'ajaxSearchAdvance',
+            'code' => 201,
+            'locations' => $locations,
+            'html' => json_encode($output),
+        ];
+        return array('#type' => 'ajax', '#commands' => $commands);
+    /*}else{
+        $commands[] = ['command' => 'ajaxSearchAdvance', 'status_code' => 404, 'message' => ''];
+        return  array('#type' => 'ajax', '#commands' => $commands);
+    }*/
+    #print_r( $output );exit;
+
+    #return ajax_search_advance_command($form_state);
+}
+
+/*function task_search_exit(){
+    $args = func_get_args();
+    print_r( $args );
+    #echo __FILE__ . ' ' . __LINE__;exit;
+}*/
+
+
+function get_posts_by_conditions($query, $fields){
+    $keys = $fields['keys'];
+    $db_and = db_and();
+    //$db_or = db_or();
+    $query->fields('n');
+    $query->leftJoin('comment', 'cmt', 'n.nid = cmt.nid');
+    #$query->fields('cmt');
+    $query->addExpression('COUNT(cmt.cid)', 'count_comment');
+    #$query->fields('count()');
+    $db_and->condition('type', 'posts')->condition('title', '%'.$keys.'%', 'LIKE');
+    if( isset($fields['cat']) && !empty($fields['cat']) ){
+        $query->join('taxonomy_index', 'ti', 'ti.nid = n.nid');
+        if( is_array( $fields['cat'] ) ){
+            $query->fields('ti');
+            $db_and->condition('ti.tid', $fields['cat']);
+        }else{
+            $query->fields('ti');
+            $db_and->condition('ti.tid', $fields['cat']);
+        }
+
+    }
+    if( isset($fields['km']) && !empty($fields['km']) && $fields['km'] > 0 ){
+        if( isset($fields['latitude']) && !empty($fields['latitude'] && isset($fields['longitude']) && !empty($fields['longitude']) ) ){
+            $lat = $fields['latitude'];
+            $lng = $fields['longitude'];
+            $rad = $fields['km'];
+            $R = 6371;// earth's mean radius, km
+            $max_lat = $lat + rad2deg($rad / $R );
+            $min_lat = $lat - rad2deg($rad / $R );
+            $max_lng = $lng + rad2deg(asin($rad/$R) / cos(deg2rad($lat)));
+            $min_lng = $lng - rad2deg(asin($rad/$R) / cos(deg2rad($lat)));
+            $db_and->condition('n.latitude', [$min_lat, $max_lat], 'BETWEEN');
+            $db_and->condition('n.longitude', [$min_lng, $max_lng], 'BETWEEN');
+        }
+    }
+    if( isset($fields['price']) && !empty($fields['price']) ){
+        if( preg_match("/(\<)/i", $fields['price']) ){
+            $price = str_replace("<", '', $fields['price']);
+            $price = trim($price);
+            #$query->condition('price', $price, '<=');
+            $db_and->condition('price', $price, '<=');
+        }elseif(preg_match("/(\-)/i", $fields['price'])){
+            $price = explode("-", $fields['price']);
+            $price_min = $price[0];
+            $price_max = $price[count($price) - 1];
+            #$query->condition('price', $price_max, '<=');
+            #$query->condition('price', $price_min, '>=');
+            $db_and->condition('price', $price_max, '<=');
+            $db_and->condition('price', $price_min, '>=');
+        }else{
+            $price = str_replace(">", '', $fields['price']);
+            $price = trim($price);
+            #$query->condition('price', $price, '>=');
+            $db_and->condition('price', $price, '>=');
+        }
+    }
+    $query->condition($db_and);
+    $query->groupBy('n.nid');
+    return $query;
+}
+
+/**
+ * Define cost for search task
+ * @return array
+ */
+function define_options_price(){
+    $costs = [
+        '0'             => t('Price'),
+        '<500'          => t('< 500$'),
+        '500-1000'      => t('500 - 1000$'),
+        '1000-2000'     => t('1000 - 2000$'),
+        '2000-3000'     => t('2000 - 3000$'),
+        '>3000'         => t('> 3000$'),
+    ];
+    return $costs;
+}
+if( !function_exists('check_field_categories') ){
+    function check_field_categories($cat = 'field_categories'){
+        static $vocabulary;
+        if( !isset( $vocabulary[$cat] ) ) {
+            $prior_field = field_read_field($cat, array('include_inactive' => TRUE));
+            $vocabulary[$cat] = $prior_field;
+        }
+        return !empty($vocabulary[$cat]) ? true : false;
+    }
+}
+
+if( !function_exists('list_categories_search_advance') ){
+
+    function list_categories_search_advance(){
+        $term_voca = taxonomy_vocabulary_machine_name_load('categories');
+        $tree = [];
+        $options = [t('Choose Category')];
+        if( !empty( $term_voca ) ) {
+            $tree = taxonomy_get_tree($term_voca->vid);
+            foreach ($tree as $key => $item){
+                $options[$item->tid] = $item->name;
+            }
+        }
+        return $options;
+    }
+}
+
+function define_search_for_km(){
+    return [
+        '0' => t('All (km)'),
+        '1' => t('1 km'),
+        '5' => t('5 km'),
+        '10' => t('10 km'),
+        '20' => t('20 km'),
+        '50' => t('50 km'),
+        '100' => t('100 km'),
+        '500' => t('500 km'),
+        '1000' => t('1000 km'),
+    ];
+}
+
+
+function search_advance_form(){
+    $form = [];
+    $form['km'] = [
+        '#type' => 'select',
+        '#options' => define_search_for_km(),
+        '#attributes' => [
+          'class' => ['selectpicker', 'circle-km'],
+        ],
+        '#ajax' => [
+            'callback' => 'search_advance_form_callback',
+        ]
+    ];
+    $form['search_advance']['price'] = [
+        '#type' => 'select',
+        '#options' => define_options_price(),
+        '#attributes' => [
+            'class' => ['selectpicker']
+        ],
+        '#ajax' => [
+            'callback' => 'search_advance_form_callback',
+        ],
+    ];
+    $form['search_advance']['cat'] = [
+        '#type' => 'select',
+        '#options' => list_categories_search_advance(),
+        '#attributes' => [
+            'class' => ['selectpicker']
+        ],
+        '#ajax' => [
+            'callback' => 'search_advance_form_callback',
+        ]
+    ];
+    if( isset($_GET['price']) ){
+        $form['search_advance']['price']['#default_value'] = $_GET['price'];
+    }
+    if( isset($_GET['cat']) ){
+        $form['search_advance']['cat']['#default_value'] = $_GET['cat'];
+    }
+    $form['search_advance']['keys'] = [
+        '#type' => 'hidden',
+        '#default_value' => isset($_REQUEST['keys']) ? $_REQUEST['keys'] : '',
+    ];
+    $form['search_advance']['latitude'] = [
+        '#type' => 'hidden',
+        '#default_value' => isset($_REQUEST['latitude']) ? $_REQUEST['latitude'] : 0,
+        '#attributes' => [
+            'id' => ['lat']
+        ]
+    ];
+    $form['search_advance']['longitude'] = [
+        '#type' => 'hidden',
+        '#default_value' => isset($_REQUEST['longitude']) ? $_REQUEST['longitude'] : 0,
+        '#attributes' => [
+            'id' => ['lng']
+        ]
+    ];
+    $form['#query_q'] = $_GET['q'];
+    $form['#attributes']['class'] = ['form-search-advance'];
+    return $form;
+}

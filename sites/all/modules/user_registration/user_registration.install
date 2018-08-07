@@ -1,0 +1,24 @@
+<?php
+/**
+ * @hook hook_schema_alter
+ * @param $schema
+ */
+function user_registration_schema_alter(&$schema){
+    $schema['users']['fields']['phone_number'] = array(
+        'type' => 'char',
+        'size' => 'normal',
+        'not null' => FALSE,
+        'length' => 15,
+        'description' => "Phone number of user",
+    );
+}
+
+function user_registration_enable(){
+    $schema = [];
+    user_registration_schema_alter($schema);
+    db_query('ALTER TABLE {users} CHANGE `mail` `mail` VARCHAR(254) CHARACTER SET utf8 COLLATE utf8_general_ci NOT NULL DEFAULT \'\' COMMENT \'User’s e-mail address.\'');
+    if( !db_field_exists('users', 'phone_number') ){
+        db_add_field('users', 'phone_number', $schema['users']['fields']['phone_number']);
+        db_add_unique_key('users', 'phone_number',['phone_number']);
+    }
+}

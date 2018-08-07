@@ -1,0 +1,107 @@
+<?php
+/**
+ * @file
+ * payment
+ */
+
+drupal_add_css(drupal_get_path('module', 'payment') . '/css/jquery.datetimepicker.min.css', array('group' => CSS_THEME, 'every_page' => TRUE, 'weight' => 10));
+drupal_add_css(drupal_get_path('module', 'payment') . '/css/payment.css', array('group' => CSS_THEME, 'every_page' => TRUE, 'weight' => 10));
+
+/**
+ * when enabling the module, create table node_member and menu custom user menu
+ */
+function payment_enable() {
+    module_load_include('inc', 'payment', 'payment.func');
+
+    if (!db_table_exists('node_member')) {
+        create_table_node_member();
+    }
+
+    $did_menu_exist = db_select('menu_custom', 'menu_name')->fields('menu_name')->condition('menu_name', 'custom-user-menu','=')->execute()->fetchAssoc();
+
+    if (empty($did_menu_exist)) {
+        create_custom_user_menu();
+    }
+}
+
+/**
+ *
+ * Implement hook_menu().
+ */
+function payment_menu() {
+    $items['account/payment-history'] = array (
+        'title' => t('Payment History'),
+        'page callback' => 'payment_history',
+        'access callback' => TRUE,
+        'file' => 'payment.func.inc',
+        'menu_name' => 'custom-user-menu'
+    );
+
+    return $items;
+}
+
+function payment_theme() {
+    return array (
+        'payment_history' => array (
+            'template' => 'template/payment-history',
+        ),
+    );
+}
+
+function earned_history_form() {
+    module_load_include('inc', 'payment', 'payment.form');
+
+    $form = create_payment_history_form();
+    $form['payment_history']['payment_type'] = array (
+        '#type' => 'hidden',
+        '#value' => 'earned',
+    );
+
+    return $form;
+}
+
+function paid_history_form() {
+    module_load_include('inc', 'payment', 'payment.form');
+
+    $form = create_payment_history_form();
+    $form['payment_history']['payment_type'] = array (
+        '#type' => 'hidden',
+        '#value' => 'paid',
+    );
+
+    return $form;
+}
+
+function earned_load_more_form() {
+    module_load_include('inc', 'payment', 'payment.form');
+
+    $form = create_load_more_form();
+    $form['payment_history']['payment_type'] = array (
+        '#type' => 'hidden',
+        '#value' => 'earned',
+    );
+
+    return $form;
+}
+
+function paid_load_more_form() {
+    module_load_include('inc', 'payment', 'payment.form');
+
+    $form = create_load_more_form();
+    $form['payment_history']['payment_type'] = array (
+        '#type' => 'hidden',
+        '#value' => 'paid',
+    );
+
+    return $form;
+}
+
+function ajax_load_more_callback($form, &$form_state) {
+    module_load_include('inc', 'payment', 'payment.func');
+    return get_payment_history_commands($form_state, true);
+}
+
+function ajax_payment_history_callback($form, &$form_state) {
+    module_load_include('inc', 'payment', 'payment.func');
+    return get_payment_history_commands($form_state, false);
+}

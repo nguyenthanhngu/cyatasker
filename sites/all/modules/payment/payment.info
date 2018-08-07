@@ -1,0 +1,6 @@
+name = Payment
+description = The module helps users check and manage their payments
+package = "User"
+core = 7.x
+version = "7.x-1.0"
+

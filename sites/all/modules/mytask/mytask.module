@@ -1,0 +1,309 @@
+<?php
+/**
+ * @file
+ * implement the module
+ */
+function mytask_enable() {
+    $schema = array();
+    mytask_schema_alter($schema);
+    
+    if (!db_field_exists('users', 'bill')) {
+        db_add_field('users', 'bill',  $schema['users']['fields']['bill']);
+    }
+}
+
+function mytask_schema_alter(&$schema) {
+    $schema['users']['fields']['bill'] = array (
+        'type' => 'float',
+        'not null' => TRUE,
+        'default' => 0
+    );
+}
+
+function mytask_menu() {
+    $items =  array (
+        'account/my-tasks' => array (
+            'title' => t('My tasks'),
+            'page callback' => 'render_my_tasks',
+            'access callback' => TRUE,
+            'menu_name' => 'custom-user-menu',
+            'file' => 'mytask.func.inc',
+        ),
+        'task/%task' => array (
+            'title' => t('Task details'),
+            'page callback' => 'render_task_details',
+            'page arguments' => array(1),
+            'access callback' => TRUE,
+            'file' => 'mytask.func.inc',
+        ),
+        'account/bill' => array (
+            'title' => t('Bill'),
+            'page callback' => 'bill_page',
+            'access callback' => TRUE,
+            'menu_name' => 'custom-user-menu'
+        )
+    );
+
+    return $items;
+}
+
+function task_to_arg($arg) {
+    return $arg;
+}
+
+function mytask_theme() {
+    return array (
+        'my_tasks' => array (
+            'template' => 'template/mytask',
+        ),
+        'task_details' => array (
+            'template' => 'template/task-details',
+        )
+    );
+}
+
+function mytask_filter_form() {
+    $form = array (
+        'status' => array (
+            '#type' => 'select',
+            '#options' => array (
+                'all' => t('All'),
+                'processing' => t('Processing'),
+                'done' => t('Done'),
+                'reopened' => t('Reopened'),
+                'closed' => t('Closed'),
+                'canceled' => t('Canceled'),
+            ),
+            '#ajax' => array (
+                'callback' => 'ajax_my_tasks_callback',
+                'event' => 'change',
+            ),
+        )
+    );
+
+    $form['#attached']['js'] = array (
+        array (
+            'type'  => 'file',
+            'data' => drupal_get_path('module', 'mytask') . '/js/ajax.js',
+        ),
+    );
+
+    return $form;
+}
+
+function update_task_status_by_poster() {
+    $form = array (
+        'status' => array (
+            '#type' => 'select',
+            '#options' => array (
+                'reopened' => t('Reopen'),
+                'canceled' => t('Cancel'),
+                'closed' => t('Close'),
+            ),
+        ),
+        'reason' => array (
+            '#title' => t('Reason'),
+            '#type' => 'textfield',
+        ),
+        'submit' => array (
+            '#type' => 'submit',
+            '#value' => t('update'),
+        )
+    );
+
+    return $form;
+}
+
+function update_task_status_by_poster_submit($form, &$form_state) {
+    $task_id = arg(1);
+    $values = array (
+        'status' => $form_state['values']['status'],
+        'reason' => $form_state['values']['reason'],
+        'updated' => REQUEST_TIME
+    );
+    update_stask($task_id, $values);
+
+    $task = get_task_detail($task_id);
+    insert_task_notification($task, 'poster');
+
+    if ($values['status'] == 'closed') {
+        $tasker = user_load($task['uid']);
+        $tasker->bill += $task['price'];
+        user_save($tasker);
+    }
+
+    drupal_goto(current_path());
+}
+
+function update_task_status_by_worker() {
+    $form = array (
+        'file' => array(
+            '#type' => 'file',
+            '#title' => t('Image'),
+            '#description' => t('Upload a file, allowed extensions: jpg, jpeg, png, gif'),
+            '#attributes' => array('multiple' => 'multiple'),
+            '#name' => 'files[]'
+        ),
+        'submit' => array (
+            '#type' => 'submit',
+            '#value' => t('update'),
+        )
+    );
+    return $form;
+}
+
+function update_task_status_by_worker_validate($form, &$form_state) {
+    $num_files = count($_FILES['files']['name']);
+
+    for ($i = 0; $i < $num_files; $i++) {
+        $file = file_save_upload($i, array(
+            'file_validate_is_image' => array(),
+            'file_validate_extensions' => array('png gif jpg jpeg'),
+        ));
+
+        if ($file) {
+            if ($file = file_move($file, 'public://field/image')) {
+                $form_state['storage']['files'][] = $file;
+            }
+            else {
+                form_set_error('file', t('Failed to write the uploaded file to the site\'s file folder.'));
+            }
+        }
+        else {
+            form_set_error('file', t('No file was uploaded.'));
+        }
+    }
+}
+
+function update_task_status_by_worker_submit($form, &$form_state) {
+    $files = $form_state['storage']['files'];
+    unset($form_state['storage']['files']);
+
+    $num_files = count($files);
+    $images = array();
+
+    for ($i = 0; $i < $num_files; $i++) {
+        $files[$i]->status = FILE_STATUS_PERMANENT;
+        file_save($files[$i]);
+        $images[] = $files[$i]->uri;
+    }
+
+    $task_id = arg(1);
+    $values = array (
+        'status' => 'done',
+        'images' => drupal_json_encode($images),
+        'updated' => REQUEST_TIME
+    );
+    update_stask($task_id, $values);
+
+    $task = get_task_detail($task_id);
+    insert_task_notification($task, 'worker');
+
+    drupal_goto(current_path());
+}
+
+function mytask_load_more_form() {
+    $form = array (
+        'page' => array (
+            '#type' => 'hidden',
+            '#default_value' => '1',
+        ),
+        'status' => array (
+            '#type' => 'hidden',
+            '#default_value' => 'all',
+        ),
+        'load_more' => array (
+            '#type' => 'button',
+            '#value' => t('Load more'),
+            '#ajax' => array (
+                'callback' => 'ajax_load_more_my_tasks_callback',
+            ),
+        )
+    );
+
+    $form['#attached']['js'] = array (
+        array (
+            'type'  => 'file',
+            'data' => drupal_get_path('module', 'mytask') . '/js/ajax.js',
+        ),
+    );
+
+    return $form;
+}
+
+function ajax_my_tasks_callback($form, &$form_state) {
+    module_load_include('inc', 'mytask', 'mytask.func');
+
+    return get_my_tasks_commands($form_state, FALSE);
+}
+
+function ajax_load_more_my_tasks_callback($form, &$form_state) {
+    module_load_include('inc', 'mytask', 'mytask.func');
+
+    return get_my_tasks_commands($form_state, TRUE);
+}
+
+function bill_page() {
+    return drupal_get_form('mytask_bill_form');
+}
+
+function mytask_bill_form() {
+    global $user;
+
+    $form = array (
+        'bill' => array(
+            '#type' => 'textfield',
+            '#title' => t('Bill'),
+            '#value' => $user->bill,
+            '#disabled' => TRUE
+        ),
+        'number' => array(
+            '#type' => 'textfield',
+            '#title' => t('Card Number'),
+            '#required' => TRUE
+        ),
+        'host' => array(
+            '#type' => 'textfield',
+            '#title' => t('Card Host'),
+            '#required' => TRUE
+        ),
+        'date' => array(
+            '#type' => 'date',
+            '#title' => t('Expiring Date'),
+            '#required' => TRUE
+        ),
+        'cvv' => array(
+            '#type' => 'textfield',
+            '#title' => t('CVV/ CVC2 Code'),
+            '#required' => TRUE
+        ),
+        'submit' => array (
+            '#type' => 'submit',
+            '#value' => t('Get'),
+        )
+    );
+
+    return $form;
+}
+
+function mytask_bill_form_validate($form, &$form_state) {
+    $card_number = $form_state['values']['number'];
+
+    if (!is_int($card_number)) {
+        form_set_error('number', t('Card number has to be a number.'));
+    }
+
+    if (strlen((string) $card_number) != 16) {
+        form_set_error('number', t('Card number has to have 16 digits.'));
+    }
+
+    $cvv = $form_state['values']['cvv'];
+
+    if (!is_int($cvv)) {
+        form_set_error('cvv', t('CVV/ CVC2 code has to be a number.'));
+    }
+
+    if (strlen((string) $cvv) != 4) {
+        form_set_error('cvv', t('CVV/ CVC2 code has to have 4 digits.'));
+    }
+}

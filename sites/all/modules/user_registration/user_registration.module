@@ -1,0 +1,748 @@
+<?php
+
+define('USER_REGISTRATION_DIR', drupal_get_path('module', 'user_registration'));
+define('CAPTCHA_KEY', '6LfNl2IUAAAAAJO2mSvKqFFXnh9pEHAXkLXtbaAp');
+define('CAPTCHA_SECRET', '6LfNl2IUAAAAANeSMeCCs1S71k4TD-MyqtZXajl_');
+if( !defined('LIBRARIES_PATH') ) {
+    define('LIBRARIES_PATH', dirname(dirname(__DIR__)) . '/libraries');
+}
+
+/**
+ * @hook hook_menu
+*/
+function user_registration_menu(){
+    /*$items['user/profile'] = array(
+        'title' => 'Edit',
+        'page callback' => 'drupal_get_form',
+        'page arguments' => array('user_profile_form', 1),
+        'access callback' => 'user_registration_edit_access',
+        'access arguments' => array(1),
+        'type' => MENU_LOCAL_TASK,
+        'file' => 'includes/user_registration.pages.inc',
+    );
+    return $items;*/
+}
+
+/**
+ * Access callback for user account editing.
+ */
+function user_registration_edit_access($account) {
+    return (($GLOBALS['user']->uid == $account->uid) || user_access('users')) && $account->uid > 0;
+}
+
+/**** hook login, register, forgot form, profile form ****/
+function user_registration_theme(){
+    $items = [];
+    $items['user_login'] = array(
+        'render element' => 'form',
+        'path' => drupal_get_path('theme', 'cyatemplate') . '/views/templates',
+        'template' => 'user-login',
+        'preprocess functions' => array(
+            'user_registration_preprocess_user_login'
+        ),
+    );
+    $items['user_register_form'] = array(
+        'render element' => 'form',
+        'path' => drupal_get_path('theme', 'cyatemplate') . '/views/templates',
+        'template' => 'user-register',
+        'preprocess functions' => array(
+            'user_registration_preprocess_user_register'
+        )
+    );
+    $items['user_pass'] = array(
+        'render element' => 'form',
+        'path' => drupal_get_path('theme', 'cyatemplate') . '/views/templates',
+        'template' => 'user-pass',
+        'preprocess functions' => array(
+            'user_registration_preprocess_user_pass'
+        )
+    );
+    #Vui long nhap thong tin ben duoi de nhan mat khau moi qua email
+    return $items;
+}
+function user_registration_preprocess_user_register(&$variables) {
+    $variables['classes_array'] = [];
+    $variables['attributes_array'] = array();
+    $variables['title_attributes_array'] = array();
+    $variables['content_attributes_array'] = array();
+    drupal_add_js('https://www.google.com/recaptcha/api.js?render=explicit&hl=en', array('group' => JS_LIBRARY));
+    drupal_add_js(USER_REGISTRATION_DIR . '/assets/js/user-registration.js', array('group' => JS_DEFAULT, 'every_page' => TRUE, 'requires_jquery' => TRUE));
+    $variables['user_register_form'] = drupal_render_children($variables['form']);
+}
+
+function user_registration_preprocess_user_login(&$variables){
+    $variables['classes_array'] = [];
+    $variables['attributes_array'] = array();
+    $variables['title_attributes_array'] = array();
+    $variables['content_attributes_array'] = array();
+    $variables['user_form'] = drupal_render_children($variables['form']);
+}
+
+function user_registration_preprocess_user_pass(&$variables){
+    $variables['classes_array'] = [];
+    $variables['attributes_array'] = array();
+    $variables['title_attributes_array'] = array();
+    $variables['content_attributes_array'] = array();
+    $variables['page_title'] = t('Reset Password');
+    $variables['describe'] = t('Please enter the information below to receive a new password via email');
+    drupal_add_js(USER_REGISTRATION_DIR . '/assets/js/user-registration.js', array('group' => JS_DEFAULT, 'every_page' => TRUE, 'requires_jquery' => TRUE));
+    $variables['user_pass'] = drupal_render_children($variables['form']);
+}
+
+
+function user_registration_register_submit( $form, &$form_state ){
+    $admin = $form_state['values']['administer_users'];
+    if ( !empty($form_state['values']['pass']) || $admin) {
+        $pass = $form_state['values']['pass'];
+    }
+    else {
+        $pass = user_password();
+    }
+    $notify = !empty($form_state['values']['notify']);
+
+    // Remove unneeded values.
+    form_state_values_clean($form_state);
+
+    $form_state['values']['pass'] = $pass;
+    $form_state['values']['init'] = $form_state['values']['mail'];
+
+    $account = $form['#user'];
+
+    entity_form_submit_build_entity('user', $account, $form, $form_state);
+    #if( !isset($form_state['values']['name']) ){
+    $account->name =  $form_state['values']['mail'];
+    #}
+    $account->status = 1;
+    // Populate $edit with the properties of $account, which have been edited on
+    // this form by taking over all values, which appear in the form values too.
+    $edit = array_intersect_key((array) $account, $form_state['values']);
+    #echo"<pre>";print_r($account);echo"</pre>";exit;
+    $account = user_save($account, $edit);
+
+    // Terminate if an error occurred during user_save().
+    if (!$account) {
+        drupal_set_message(t("Error saving user account."), 'error');
+        $form_state['redirect'] = '';
+        return;
+    }
+    $form_state['user'] = $account;
+    $form_state['values']['uid'] = $account->uid;
+
+    watchdog('user', 'New user: %name (%email).', array('%name' => $account->name, '%email' => $form_state['values']['mail']), WATCHDOG_NOTICE, l(t('edit'), 'user/' . $account->uid . '/edit'));
+
+    // Add plain text password into user account to generate mail tokens.
+    $account->password = $pass;
+
+    // New administrative account without notification.
+    $uri = entity_uri('user', $account);#echo"<pre>";print_r($account);echo"</pre>";
+    #echo"<pre>";var_dump($admin, $notify);echo"</pre>";
+
+    if ($admin && !$notify) {
+        drupal_set_message(t('Created a new user account for <a href="@url">%name</a>. No e-mail has been sent.', array('@url' => url($uri['path'], $uri['options']), '%name' => $account->name)));
+    }
+    // No e-mail verification required; log in user immediately.
+    elseif (!$admin && !variable_get('user_email_verification', TRUE) && $account->status) {
+        _user_registration_mail_notify('register_no_approval_required', $account);
+        $form_state['uid'] = $account->uid;
+        user_login_submit(array(), $form_state);
+        drupal_set_message(t('Registration successful. You are now logged in.'));
+        $form_state['redirect'] = url("user/profile", array('absolute' => TRUE));
+    }
+    // No administrator approval required.
+    elseif ($account->status || $notify) {
+        $op = $notify ? 'register_admin_created' : 'register_no_approval_required';
+        _user_registration_mail_notify($op, $account);
+        if ($notify) {
+            drupal_set_message(t('A welcome message with further instructions has been e-mailed to the new user <a href="@url">%name</a>.', array('@url' => url($uri['path'], $uri['options']), '%name' => $account->name)));
+        }
+        else {
+            drupal_set_message(t('A welcome message with further instructions has been sent to your e-mail address.'));
+            $form_state['redirect'] = '';
+        }
+        $form_state['uid'] = $account->uid;
+        user_login_submit(array(), $form_state);
+        drupal_set_message(t('Registration successful. You are now logged in.'));
+        $form_state['redirect'] = url("user/profile", array('absolute' => TRUE));
+    }
+    // Administrator approval required.
+    else {
+        _user_registration_mail_notify('register_pending_approval', $account);
+        drupal_set_message(t('Thank you for applying for an account. Your account is currently pending approval by the site administrator.<br />In the meantime, a welcome message with further instructions has been sent to your e-mail address.'));
+        $form_state['redirect'] = '';
+    }
+}
+
+function user_registration_register_validate($form, &$form_state){
+    $form_values = $form_state['values'];
+    if( $form_values['pass'] != $form_values['confirm_pass'] ){
+        form_set_error('confirm_pass', t('Those passwords didn\'t match . Try again .'));
+    }
+
+    $file_captcha = LIBRARIES_PATH . '/includes/verify_captcha.php';
+    if( file_exists($file_captcha) ){
+        require_once $file_captcha;
+        $gRecaptchaResponse = $form_values['recaptcha'];
+        $response = verification_captcha(CAPTCHA_SECRET, $gRecaptchaResponse);
+        if ( is_string($response) ) {
+            form_set_error('recaptcha', t($response));
+        }
+
+    }else{
+        form_set_error('recaptcha', t('Please choose captcha'));
+    }
+    $result = db_select('users', 'u')->fields('u')->condition('phone_number', db_escape_field($form_values['phone_number']))->execute()->fetchObject();
+    if(!empty($result)){
+        form_set_error('phone_number', t('Phone number already exists'));
+    }
+}
+
+/**
+ * Implements hook_form_alter().
+ */
+function user_registration_form_alter(&$form, &$form_state, $form_id){
+    #echo "<pre>";print_r($form);echo "</pre>";exit;
+    if($form_id == 'user_register_form'){
+        unset($form['account']['name']);
+        $form['account']['mail']['#description'] = '';
+        unset($form['account']['mail']['#title']);
+        $form['actions']['#attributes'] = ['class' => ['flex-c-m', 'size2', 's1-txt2', 'how-btn1', 'trans-04']];
+        $form['account']['mail']['#attributes'] = [
+            'class' => ['input100','placeholder0', 's1-txt1'],
+            'placeholder' => t('Email'),
+        ];
+        $form['account']['phone_number'] = [
+            '#type' => 'textfield',
+            #'#title' => t('Phone number'),
+            '#name' => 'phone_number',
+            '#attributes' => [
+                'class' => ['input100','placeholder0', 's1-txt1'],
+                'placeholder' => t('Phone number'),
+            ],
+            '#id' => 'edit-phone-number',
+            '#process' => ['ajax_process_form'],
+            '#required' => true
+        ];
+        $form['account']['pass'] = [
+            '#type' => 'password',
+            #'#title' => t('Password'),
+            '#weight' => 2,
+            '#name' => 'pass',
+            '#attributes' => [
+                'class' => ['input100','placeholder0', 's1-txt1'],
+                'placeholder' => t('Password'),
+            ],
+            '#id' => 'edit-pass',
+            '#process' => ['ajax_process_form'],
+            '#required' => true
+        ];
+        $form['account']['confirm_pass'] = [
+            '#type' => 'password',
+            #'#title' => t('Confirm Password'),
+            '#weight' => 3,
+            '#name' => 'confirm_pass',
+            '#attributes' => [
+                'class' => ['input100','placeholder0', 's1-txt1'],
+                'placeholder' => t('Confirm Password'),
+            ],
+            '#id' => 'edit-confirm-pass',
+            '#process' => ['ajax_process_form'],
+        ];
+        $form['recaptcha'] = [
+           '#type' => 'hidden',
+            '#weight' => 4,
+            '#name' => 'recaptcha',
+            '#attributes' => [
+                'class' => ['response_captcha'],
+                'id' => 'recaptchat-element',
+            ],
+            '#prefix' => "<div id='recaptcha' class='recaptcha' data-sitekey='".CAPTCHA_KEY."'></div>",
+        ];
+        $form['actions']['submit']['#attributes'] = ['class' => ['btn-captcha']];
+        $form['#validate'][] = 'user_registration_register_validate';
+        $form['#submit'] = ['user_registration_register_submit'];
+    }elseif($form_id == 'user_login'){
+        unset($form['name']['#title']);
+        unset($form['pass']['#title']);
+        $form['name']['#description'] = '';
+        $form['pass']['#description'] = '';
+        $form['name']['#attributes'] = [
+            'class' => ['input100','placeholder0', 's1-txt1'],
+            'placeholder' => t('Email or Phone'),
+        ];
+        $form['pass']['#attributes'] = [
+            'class' => ['input100','placeholder0', 's1-txt1'],
+            'placeholder' => t('Password'),
+        ];
+        $form['name']['#field_suffix'] = "";
+        $form['pass']['#field_suffix'] = "";
+        if (($key = array_search('user_login_final_validate', $form['#validate'])) !== false) {
+            $user_login_final_validate = $form['#validate'][$key];
+            unset($form['#validate'][$key]);
+            $form['#validate'][] = 'user_login_email_or_phone_validate';
+            $form['#validate'][] = $user_login_final_validate;
+        }else{
+            $form['#validate'][] = 'user_login_email_or_phone_validate';
+        }
+        $form['actions']['submit']['#value'] = t('Submit');
+        $form['actions']['#attributes'] = ['class' => ['flex-c-m', 'size2', 's1-txt2', 'how-btn1', 'trans-04']];
+        $form['#submit'][] = 'user_registration_login_submit';
+    }elseif($form_id == 'user_pass'){
+        $form['name']['#title'] = t('Email address');
+        $form['name']['#attributes']['id'] = 'name';
+        $form['actions']['submit']['#value'] = t('Send');
+        $form['#submit'] = ['user_registration_pass_submit'];
+    }
+}
+
+function user_registration_menu_alter(&$items){
+    $items['user/reset/%/%/%']['page arguments'] = array('user_registration_pass_reset', 2, 3, 4);
+}
+
+/**
+ * Form submission handler for user_pass().
+ *
+ * @see user_pass_validate()
+ */
+function user_registration_pass_submit($form, &$form_state) {
+    global $language;
+    $transaction = db_transaction('update_password');
+    $account = $form_state['values']['account'];
+    $new_password = user_password(8);
+    $edit['pass'] = $new_password;
+    user_save($account, $edit, 'account');
+    $account->password = $new_password;
+    // Mail one time login URL and instructions using current language.
+    $mail = _user_registration_mail_notify('password_reset', $account, $language);
+    if (!empty($mail)) {
+        watchdog('user', 'Password reset instructions mailed to %name at %email.', array('%name' => $account->name, '%email' => $account->mail));
+        drupal_set_message(t('Further instructions have been sent to your e-mail address.'));
+    }else{
+        $transaction->rollback();
+    }
+
+    $form_state['redirect'] = 'user';
+    return;
+}
+
+
+/**
+ * Menu callback; process one time login link and redirects to the user page on success.
+ */
+function user_registration_pass_reset($form, &$form_state, $uid, $timestamp, $hashed_pass, $action = NULL) {
+    global $user;
+
+    // When processing the one-time login link, we have to make sure that a user
+    // isn't already logged in.
+    if ($user->uid) {
+        // The existing user is already logged in. Log them out and reload the
+        // current page so the password reset process can continue.
+        if ($user->uid == $uid) {
+            // Preserve the current destination (if any) and ensure the redirect goes
+            // back to the current page; any custom destination set in
+            // hook_user_logout() and intended for regular logouts would not be
+            // appropriate here.
+            $destination = array();
+            if (isset($_GET['destination'])) {
+                $destination = drupal_get_destination();
+            }
+            user_logout_current_user();
+            unset($_GET['destination']);
+            drupal_goto(current_path(), array('query' => drupal_get_query_parameters() + $destination));
+        }
+        // A different user is already logged in on the computer.
+        else {
+            $reset_link_account = user_load($uid);
+            if (!empty($reset_link_account)) {
+                drupal_set_message(t('Another user (%other_user) is already logged into the site on this computer, but you tried to use a one-time link for user %resetting_user. Please <a href="!logout">logout</a> and try using the link again.',
+                    array('%other_user' => $user->name, '%resetting_user' => $reset_link_account->name, '!logout' => url('user/logout'))), 'warning');
+            } else {
+                // Invalid one-time link specifies an unknown user.
+                drupal_set_message(t('The one-time login link you clicked is invalid.'), 'error');
+            }
+            drupal_goto();
+        }
+    }
+    else {
+        // Time out, in seconds, until login URL expires. Defaults to 24 hours =
+        // 86400 seconds.
+        $timeout = variable_get('user_password_reset_timeout', 86400);
+        $current = REQUEST_TIME;
+        // Some redundant checks for extra security ?
+        $users = user_load_multiple(array($uid), array('status' => '1'));
+        if ($timestamp <= $current && $account = reset($users)) {
+            // No time out for first time login.
+            if ($account->login && $current - $timestamp > $timeout) {
+                drupal_set_message(t('You have tried to use a one-time login link that has expired. Please request a new one using the form below.'), 'error');
+                drupal_goto('user/password');
+            }
+            elseif ($account->uid && $timestamp >= $account->login && $timestamp <= $current && $hashed_pass == user_pass_rehash($account->pass, $timestamp, $account->login, $account->uid)) {
+                // First stage is a confirmation form, then login
+                if ($action == 'login') {
+                    // Set the new user.
+                    $user = $account;
+                    // user_login_finalize() also updates the login timestamp of the
+                    // user, which invalidates further use of the one-time login link.
+                    user_login_finalize();
+                    watchdog('user', 'User %name used one-time login link at time %timestamp.', array('%name' => $account->name, '%timestamp' => $timestamp));
+                    drupal_set_message(t('You have just used your one-time login link. It is no longer necessary to use this link to log in. Please change your password.'));
+                    // Let the user's password be changed without the current password check.
+                    $token = drupal_random_key();
+                    $_SESSION['pass_reset_' . $user->uid] = $token;
+                    drupal_goto('user/profile', array('query' => array('pass-reset-token' => $token)));
+                }
+                else {
+                    $form['message'] = array('#markup' => t('<p>This is a one-time login for %user_name and will expire on %expiration_date.</p><p>Click on this button to log in to the site and change your password.</p>', array('%user_name' => $account->name, '%expiration_date' => format_date($timestamp + $timeout))));
+                    $form['help'] = array('#markup' => '<p>' . t('This login can be used only once.') . '</p>');
+                    $form['actions'] = array('#type' => 'actions');
+                    $form['actions']['submit'] = array('#type' => 'submit', '#value' => t('Log in'));
+                    $form['#action'] = url("user/reset/$uid/$timestamp/$hashed_pass/login");
+                    return $form;
+                }
+            }
+            else {
+                drupal_set_message(t('You have tried to use a one-time login link that has either been used or is no longer valid. Please request a new one using the form below.'), 'error');
+                drupal_goto('user/password');
+            }
+        }
+        else {
+            // Deny access, no more clues.
+            // Everything will be in the watchdog's URL for the administrator to check.
+            drupal_access_denied();
+            drupal_exit();
+        }
+    }
+}
+
+function user_registration_login_submit($form, &$form_state){
+    $form_state['redirect'] = 'user/profile';
+}
+
+function user_load_by_phone_number($phone_number){
+    $users = user_load_multiple(array(), array('phone_number' => $phone_number));
+    return reset($users);
+}
+
+/**
+ * Try to validate the user's login credentials locally.
+ *
+ * @param $name
+ *   User name to authenticate.
+ * @param $password
+ *   A plain-text password, such as trimmed text from form values.
+ * @return
+ *   The user's uid on success, or FALSE on failure to authenticate.
+ */
+function user_registration_authenticate($username, $password) {
+    $uid = FALSE;
+    if (!empty($username) && strlen(trim($password)) > 0) {
+        if( valid_email_address($username) ){
+            $account = user_load_by_mail($username);
+        }else{
+            $account = user_load_by_phone_number($username);
+        }
+        if ($account) {
+            // Allow alternate password hashing schemes.
+            require_once DRUPAL_ROOT . '/' . variable_get('password_inc', 'includes/password.inc');
+            if (user_check_password($password, $account)) {
+                // Successful authentication.
+                $uid = $account->uid;
+
+                // Update user to new password scheme if needed.
+                if (user_needs_new_hash($account)) {
+                    user_save($account, array('pass' => $password));
+                }
+            }
+        }
+    }
+    return $uid;
+}
+
+function user_login_email_or_phone_validate($form, &$form_state){
+    $form_values = $form_state['values'];
+
+
+    if( empty($form_state['uid']) ) {
+        $password = trim($form_values['pass']);
+        if (!empty($form_state['values']['name']) && strlen(trim($password)) > 0) {
+            // Do not allow any login from the current user's IP if the limit has been
+            // reached. Default is 50 failed attempts allowed in one hour. This is
+            // independent of the per-user limit to catch attempts from one IP to log
+            // in to many different user accounts.  We have a reasonably high limit
+            // since there may be only one apparent IP for all users at an institution.
+            if (!flood_is_allowed('failed_login_attempt_ip', variable_get('user_failed_login_ip_limit', 50), variable_get('user_failed_login_ip_window', 3600))) {
+                $form_state['flood_control_triggered'] = 'ip';
+                return;
+            }
+            if (valid_email_address(trim($form_values['name']))) {
+                $account = db_query("SELECT * FROM {users} WHERE mail = :mail AND status = 1", array(':mail' => $form_values['name']))->fetchObject();
+            } else {
+                $account = db_query("SELECT * FROM {users} WHERE phone_number = :phone_number AND status = 1", array(':phone_number' => $form_values['name']))->fetchObject();
+            }
+            if ($account) {
+                if (variable_get('user_failed_login_identifier_uid_only', FALSE)) {
+                    // Register flood events based on the uid only, so they apply for any
+                    // IP address. This is the most secure option.
+                    $identifier = $account->uid;
+                }
+                else {
+                    // The default identifier is a combination of uid and IP address. This
+                    // is less secure but more resistant to denial-of-service attacks that
+                    // could lock out all users with public user names.
+                    $identifier = $account->uid . '-' . ip_address();
+                }
+                $form_state['flood_control_user_identifier'] = $identifier;
+
+                // Don't allow login if the limit for this user has been reached.
+                // Default is to allow 5 failed attempts every 6 hours.
+                if (!flood_is_allowed('failed_login_attempt_user', variable_get('user_failed_login_user_limit', 5), variable_get('user_failed_login_user_window', 21600), $identifier)) {
+                    $form_state['flood_control_triggered'] = 'user';
+                    return;
+                }
+            }
+            // We are not limited by flood control, so try to authenticate.
+            // Set $form_state['uid'] as a flag for user_login_final_validate().
+            $form_state['uid'] = user_registration_authenticate($form_state['values']['name'], $password);
+            #echo "<pre>";var_dump(__LINE__, __FILE__);print_r($form_state);echo"</pre>";exit;
+        }
+    }
+}
+
+/**
+ * Conditionally create and send a notification email when a certain
+ * operation happens on the given user account.
+ *
+ * @see user_mail_tokens()
+ * @see drupal_mail()
+ *
+ * @param $op
+ *   The operation being performed on the account. Possible values:
+ *   - 'register_admin_created': Welcome message for user created by the admin.
+ *   - 'register_no_approval_required': Welcome message when user
+ *     self-registers.
+ *   - 'register_pending_approval': Welcome message, user pending admin
+ *     approval.
+ *   - 'password_reset': Password recovery request.
+ *   - 'status_activated': Account activated.
+ *   - 'status_blocked': Account blocked.
+ *   - 'cancel_confirm': Account cancellation request.
+ *   - 'status_canceled': Account canceled.
+ *
+ * @param $account
+ *   The user object of the account being notified. Must contain at
+ *   least the fields 'uid', 'name', and 'mail'.
+ * @param $language
+ *   Optional language to use for the notification, overriding account language.
+ *
+ * @return
+ *   The return value from drupal_mail_system()->mail(), if ends up being
+ *   called.
+ */
+function _user_registration_mail_notify($op, $account, $language = NULL) {
+    // By default, we always notify except for canceled and blocked.
+    $default_notify = ($op != 'status_canceled' && $op != 'status_blocked');
+    $notify = variable_get('user_mail_' . $op . '_notify', $default_notify);
+    if ($notify) {
+        $params['account'] = $account;
+        $language = $language ? $language : user_preferred_language($account);
+        $mail = drupal_mail('user_registration', $op, $account->mail, $language, $params);
+        if ($op == 'register_pending_approval') {
+            // If a user registered requiring admin approval, notify the admin, too.
+            // We use the site default language for this.
+            drupal_mail('user_registration', 'register_pending_approval_admin', variable_get('site_mail', ini_get('sendmail_from')), language_default(), $params);
+        }
+    }
+    return empty($mail) ? NULL : $mail['result'];
+}
+
+
+/**
+ * Implements hook_mail().
+ */
+function user_registration_mail($key, &$message, $params) {
+    $language = $message['language'];
+    $variables = array('user' => $params['account']);
+    $message['subject'] .= _user_registration_mail_text($key . '_subject', $language, $variables);
+    $message['body'][] = _user_registration_mail_text($key . '_body', $language, $variables);
+}
+
+/**
+ * Returns a mail string for a variable name.
+ *
+ * Used by user_mail() and the settings forms to retrieve strings.
+ */
+function _user_registration_mail_text($key, $language = NULL, $variables = array(), $replace = TRUE) {
+    $langcode = isset($language) ? $language->language : NULL;
+        // No override, return default string.
+    switch ($key) {
+        case 'register_no_approval_required_subject':
+            $text = t('Account details for [user:name] at [site:name]', array(), array('langcode' => $langcode));
+            break;
+        case 'register_no_approval_required_body':
+            $text = t("[user:name],
+
+Thank you for registering at [site:name]. You may now log in by clicking this link or copying and pasting it to your browser:
+
+You will be able to log in at [site:login-url] in the future using:
+
+username: [user:name]
+password: [user:password]
+
+--  [site:name] team", array(), array('langcode' => $langcode));
+            break;
+
+        case 'register_admin_created_subject':
+            $text = t('An administrator created an account for you at [site:name]', array(), array('langcode' => $langcode));
+            break;
+        case 'register_admin_created_body':
+            $text = t("[user:name],
+
+A site administrator at [site:name] has created an account for you. You may now log in by clicking this link or copying and pasting it to your browser:
+
+[user:one-time-login-url]
+
+This link can only be used once to log in and will lead you to a page where you can set your password.
+
+After setting your password, you will be able to log in at [site:login-url] in the future using:
+
+username: [user:name]
+password: [user:password]
+
+--  [site:name] team", array(), array('langcode' => $langcode));
+            break;
+
+        case 'register_pending_approval_subject':
+        case 'register_pending_approval_admin_subject':
+            $text = t('Account details for [user:name] at [site:name] (pending admin approval)', array(), array('langcode' => $langcode));
+            break;
+        case 'register_pending_approval_body':
+            $text = t("[user:name],
+
+Thank you for registering at [site:name]. Your application for an account is currently pending approval. Once it has been approved, you will receive another e-mail containing information about how to log in, set your password, and other details.
+
+
+--  [site:name] team", array(), array('langcode' => $langcode));
+            break;
+        case 'register_pending_approval_admin_body':
+            $text = t("[user:name] has applied for an account.
+
+[user:edit-url]", array(), array('langcode' => $langcode));
+            break;
+
+        case 'password_reset_subject':
+            $text = t('Replacement login information for [user:name] at [site:name]', array(), array('langcode' => $langcode));
+            break;
+        case 'password_reset_body':
+            $text = t("[user:name],
+
+A request to reset the password for your account has been made at [site:name].
+
+You may now log in by clicking this link or copying and pasting it to your browser:
+
+[user:one-time-login-url]
+Your password: [user:password]
+
+This link can only be used once to log in and will lead you to a page where you can set your password. It expires after one day and nothing will happen if it's not used.
+
+--  [site:name] team", array(), array('langcode' => $langcode));
+            break;
+
+        case 'status_activated_subject':
+            $text = t('Account details for [user:name] at [site:name] (approved)', array(), array('langcode' => $langcode));
+            break;
+        case 'status_activated_body':
+            $text = t("[user:name],
+
+Your account at [site:name] has been activated.
+
+You may now log in by clicking this link or copying and pasting it into your browser:
+
+[user:one-time-login-url]
+
+This link can only be used once to log in and will lead you to a page where you can set your password.
+
+After setting your password, you will be able to log in at [site:login-url] in the future using:
+
+username: [user:name]
+password: Your password
+
+--  [site:name] team", array(), array('langcode' => $langcode));
+            break;
+
+        case 'status_blocked_subject':
+            $text = t('Account details for [user:name] at [site:name] (blocked)', array(), array('langcode' => $langcode));
+            break;
+        case 'status_blocked_body':
+            $text = t("[user:name],
+
+Your account on [site:name] has been blocked.
+
+--  [site:name] team", array(), array('langcode' => $langcode));
+            break;
+
+        case 'cancel_confirm_subject':
+            $text = t('Account cancellation request for [user:name] at [site:name]', array(), array('langcode' => $langcode));
+            break;
+        case 'cancel_confirm_body':
+            $text = t("[user:name],
+
+A request to cancel your account has been made at [site:name].
+
+You may now cancel your account on [site:url-brief] by clicking this link or copying and pasting it into your browser:
+
+[user:cancel-url]
+
+NOTE: The cancellation of your account is not reversible.
+
+This link expires in one day and nothing will happen if it is not used.
+
+--  [site:name] team", array(), array('langcode' => $langcode));
+            break;
+
+        case 'status_canceled_subject':
+            $text = t('Account details for [user:name] at [site:name] (canceled)', array(), array('langcode' => $langcode));
+            break;
+        case 'status_canceled_body':
+            $text = t("[user:name],
+
+Your account on [site:name] has been canceled.
+
+--  [site:name] team", array(), array('langcode' => $langcode));
+            break;
+    }
+
+    if ($replace) {
+        // We do not sanitize the token replacement, since the output of this
+        // replacement is intended for an e-mail message, not a web browser.
+        return token_replace($text, $variables, array('language' => $language, 'callback' => 'user_registration_mail_tokens', 'sanitize' => FALSE, 'clear' => TRUE));
+    }
+
+    return $text;
+}
+
+
+/**
+ * Token callback to add unsafe tokens for user mails.
+ *
+ * This function is used by the token_replace() call at the end of
+ * _user_mail_text() to set up some additional tokens that can be
+ * used in email messages generated by user_mail().
+ *
+ * @param $replacements
+ *   An associative array variable containing mappings from token names to
+ *   values (for use with strtr()).
+ * @param $data
+ *   An associative array of token replacement values. If the 'user' element
+ *   exists, it must contain a user account object with the following
+ *   properties:
+ *   - login: The UNIX timestamp of the user's last login.
+ *   - pass: The hashed account login password.
+ * @param $options
+ *   Unused parameter required by the token_replace() function.
+ */
+function user_registration_mail_tokens(&$replacements, $data, $options) {
+    if (isset($data['user'])) {
+        $replacements['[user:cancel-url]'] = user_cancel_url($data['user']);
+        $replacements['[user:one-time-login-url]'] = user_pass_reset_url($data['user']);
+        $replacements['[user:password]'] = $data['user']->password;
+    }
+}

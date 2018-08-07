@@ -1,0 +1,135 @@
+<?php
+/**
+ * @file
+ * authentication
+ */
+
+define("LIMITED_TIME", 3600);
+define("MAXINUM_TYPING_NUMBER", 5);
+define("ACTIVE_CODE_LENGTH", 6);
+
+/**
+ * Implements hook_schema_alter().
+ */
+function authentication_schema_alter(&$schema) {
+    $schema['users']['fields']['code'] = array(
+        'type' => 'varchar',
+        'length' => 255,
+        'not null' => TRUE,
+        'default' => '',
+    );
+    $schema['users']['fields']['user_agent'] = array(
+        'type' => 'varchar',
+        'length' => 255,
+        'not null' => TRUE,
+        'default' => '',
+    );
+}
+
+/**
+ * adds code field as installing module
+ */
+function authentication_enable() {
+    $schema = array();
+
+    authentication_schema_alter($schema);
+
+    db_add_field('users', 'code', $schema['users']['fields']['code']);
+    db_add_field('users', 'user_agent', $schema['users']['fields']['user_agent']);
+}
+
+/**
+ * drops code field when uninstalling module
+ */
+function authentication_disable() {
+    db_drop_field('users', 'code');
+    db_drop_field('users', 'user_agent');
+}
+
+/**
+ * authenticates user
+ */
+function authentication_init() {
+    global $user;
+    global $base_url;
+
+    if (user_is_logged_in()) {
+
+        $user_agent = !empty($_SERVER['HTTP_USER_AGENT']) ? $_SERVER['HTTP_USER_AGENT'] : "";
+
+        if($user->user_agent != $user_agent) {
+            session_destroy();
+            drupal_goto();
+        }
+
+        if (!empty($user->code)) {
+            $code = drupal_json_decode($user->code);
+            if(REQUEST_TIME - $code['time'] > LIMITED_TIME) {
+                $edit = array (
+                    'code' => ''
+                );
+                user_save($user, $edit);
+                session_destroy();
+                drupal_goto();
+            } else {
+                if (current_path() != 'active-code') {
+                    drupal_goto($base_url . "/active-code");
+                }
+            }
+        }
+    }
+
+    if (!user_is_logged_in()) {
+        if (current_path() == 'active-code') {
+            drupal_goto();
+        }
+    }
+}
+
+/**
+ * create page authenticate by code
+ */
+function authentication_menu() {
+    $items['active-code'] = array (
+        'title' => '2 authentication',
+        'page callback' => 'authentication_active_code',
+        'file' => 'authentication.func.inc',
+        'access callback' => TRUE,
+        'menu_name' => '2 authentication'
+    );
+
+    return $items;
+}
+
+/**
+ * hook login
+ */
+function authentication_user_login() {
+    global $user;
+
+    module_load_include('inc', 'authentication', 'authentication.func');
+
+    if (!empty($user->code)) {
+        $code = drupal_json_decode($user->code);
+        $code['value'] = generate_random_string(ACTIVE_CODE_LENGTH);
+    } else {
+        $code = array(
+            'time' => REQUEST_TIME,
+            'value' => generate_random_string(ACTIVE_CODE_LENGTH),
+            'number' => MAXINUM_TYPING_NUMBER,
+        );
+    }
+
+    $edit = array(
+        'code' => drupal_json_encode($code),
+        'user_agent' => !empty($_SERVER['HTTP_USER_AGENT']) ? $_SERVER['HTTP_USER_AGENT'] : ""
+    );
+
+    $language = language_default();
+    $params['subject'] = t('Your active code');
+    $params['body'] = array(t("Your active code is ") . $code['value']);
+    drupal_mail('smtp', 'smtp-test', $user->mail, $language, $params);
+
+    user_save($user, $edit);
+}
+
